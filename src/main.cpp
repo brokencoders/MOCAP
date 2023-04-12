@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 
-
+#define ALGEBRA_IMPL
 #define ALGEBRA_SHORT_NAMES
 #include "algbera.h"
 #include "calibration.h"
@@ -33,6 +33,40 @@ int main()
 
     /* Homographies estimation */
 
+    std::vector<Mat> H;
+    H.reserve(world_points.size());
+
+    for (auto& imgpt : points)
+    {
+        auto [Nu, Nu_i] = normalize2Dset(imgpt);
+
+        int n_pt = layout_x * layout_y;
+        Mat M(2 * n_pt, 9);
+
+        for (int i = 0; i < imgpt.size(); i++)
+        {
+            auto Xi = world_points[i][0];
+            auto Yi = world_points[i][1];
+            auto ui = imgpt[i][0];
+            auto vi = imgpt[i][1];
+
+            M.setRow(i * 2,     { -Xi, -Yi, -1, 0, 0, 0, ui * Xi, ui * Yi, ui});
+            M.setRow(i * 2 + 1, { 0, 0, 0, -Xi, -Yi, -1, vi * Xi, vi * Yi, vi});
+        }
+
+        auto[U, S, Vt] = M.svd();
+        Vec h = Vt.getRow(-1).T();
+
+        Vec data = vstack(imgpt);
+        using namespace std::placeholders;
+        h = minimizelm(std::bind(multiPointProjectionError, world_points, _1, data), h, 
+                       nullptr); 
+
+        h.reshape(3, 3);
+        H.push_back(Nu_i * h * Nx);
+
+        unnormalizeSet(imgpt, Nu_i);
+    }
 
 
     unnormalizeSet(world_points, Nx_i);

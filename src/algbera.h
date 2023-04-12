@@ -7,9 +7,19 @@
 #include <cstring>
 #include <cmath>
 #include <utility>
+#include <cstdlib>
+#include <immintrin.h>
+#include <tuple>
 
 namespace Algebra
 {
+    inline size_t closest_mult(size_t n, size_t mult)
+    {
+        if (n % mult != 0)
+            return n + mult - n % mult;
+        else 
+            return n;
+    }
 
     class Matrix
     {
@@ -31,6 +41,7 @@ namespace Algebra
         Matrix &operator+=(double s);
 
         Matrix operator-(const Matrix &m) const;
+        Matrix operator-() const;
         Matrix operator-(double s) const;
         Matrix &operator-=(const Matrix &m);
         Matrix &operator-=(double s);
@@ -40,97 +51,129 @@ namespace Algebra
         Matrix &operator*=(const Matrix &m);
         Matrix &operator*=(double s);
 
-        /* Matrix operator/(const Matrix& m); */
+        Matrix operator/(const Matrix& m);
         Matrix operator/(double s) const;
         /* Matrix operator/=(const Matrix& m); */
         Matrix &operator/=(double s);
 
+        operator double();
+
         double norm();
-        Matrix hom();
-        Matrix hom_i();
+
+        double max();
+        double absMax();
+
+        Matrix hom() const;
+        Matrix hom_i() const;
+
+        Matrix solve(const Matrix& b);
+        std::tuple<Matrix, Matrix, Matrix> svd();
+
+        void reshape(size_t row, size_t col);
 
         double &operator[](size_t i);
         double &val(size_t row, size_t col);
         Matrix& vstack(const Matrix& mat);
         Matrix& hstack(const Matrix& mat);
 
-        void print();
-        inline void transpose() { transposed = !transposed; std::swap(row, col); }
-        inline Matrix T();
+        void setCol(int64_t c, const std::initializer_list<double> &lst);
+        void setRow(int64_t r, const std::initializer_list<double> &lst);
+        Matrix getCol(int64_t c);
+        Matrix getRow(int64_t r);
 
-    protected:
+        void print();
+        void transpose() { transposed = !transposed; std::swap(row, col); }
+        Matrix T();
+
+    private:
         double *m;
         size_t row, col, size;
         bool transposed;
 
         static const size_t buff_size = 16;
-        double buff[buff_size];
+        alignas(32) double buff[buff_size];
+
+    public:
+        const size_t& rows = row;
+        const size_t& cols = col;
+
+        friend void zero(Matrix&);
+        friend Matrix identity(size_t);
+        friend Matrix operator+(double, const Matrix&);
+        friend Matrix operator-(double, const Matrix&);
+        friend Matrix operator*(double, const Matrix&);
+        friend Matrix vstack(const std::vector<Matrix>& mats);
+        friend Matrix hstack(const std::vector<Matrix>& mats);
     };
 
-    inline Matrix::Matrix(size_t length)
+    using Vector = Matrix;
+
+#ifdef ALGEBRA_IMPL
+
+    Matrix::Matrix(size_t length)
         : row(length), col(1), size(length), transposed(false)
     {
         if (size <= buff_size)
             m = buff;
         else
-            m = new double[size];
+            m = (double*)std::aligned_alloc(32, size * sizeof(double));
     }
 
-    inline Matrix::Matrix(size_t row, size_t col)
+    Matrix::Matrix(size_t row, size_t col)
         : row(row), col(col), size(row * col), transposed(false)
     {
         if (size <= buff_size)
             m = buff;
         else
-            m = new double[size];
+            m = (double*)std::aligned_alloc(32, size * sizeof(double));
     }
 
-    inline Matrix::Matrix(const std::initializer_list<double> &lst)
+    Matrix::Matrix(const std::initializer_list<double> &lst)
         : row(lst.size()), col(1), size(lst.size()), transposed(false)
     {
         if (size <= buff_size)
             m = buff;
         else
-            m = new double[size];
+            m = (double*)std::aligned_alloc(32, size * sizeof(double));
         std::copy(lst.begin(), lst.end(), m);
     }
 
-    inline Matrix::Matrix(size_t row, size_t col, const std::initializer_list<double> &lst)
+    Matrix::Matrix(size_t row, size_t col, const std::initializer_list<double> &lst)
         : row(row), col(col), size(row * col), transposed(false)
     {
         if (size <= buff_size)
             m = buff;
         else
-            m = new double[size];
+            m = (double*)std::aligned_alloc(32, size * sizeof(double));
         if (lst.size() > size)
             throw std::out_of_range("Matrix : too many values in the initializer");
         else
             std::copy(lst.begin(), lst.end(), m);
     }
 
-    inline Matrix::Matrix(const Matrix &mat)
+    Matrix::Matrix(const Matrix &mat)
         : row(mat.row), col(mat.col), size(mat.size), transposed(mat.transposed)
     {
         if (size <= buff_size)
             m = buff;
         else
-            m = new double[size];
+            m = (double*)std::aligned_alloc(32, size * sizeof(double));
         memcpy(m, mat.m, size * sizeof(double));
         // std::cout << "Matrix copy constructor\n";
     }
 
-    inline Matrix::Matrix(const Matrix &mat, bool)
+    Matrix::Matrix(const Matrix &mat, bool)
         : row(mat.row), col(mat.col), size(mat.size), transposed(mat.transposed)
     {
         if (size <= buff_size)
             m = buff;
         else
-            m = new double[size];
+            m = (double*)std::aligned_alloc(32, size * sizeof(double));
         memcpy(m, mat.m, size * sizeof(double));
         transpose();
     }
 
-    inline Matrix::Matrix(Matrix &&mat)
+    Matrix::Matrix(Matrix &&mat)
         : row(mat.row), col(mat.col), size(mat.size), transposed(mat.transposed)
     {
         if (mat.m != mat.buff)
@@ -147,30 +190,31 @@ namespace Algebra
         // std::cout << "Matrix move constructor\n";
     }
 
-    inline Matrix::~Matrix()
+    Matrix::~Matrix()
     {
         if (m != buff && m)
-            delete[] m;
+            std::free(m);
     }
 
-    inline Matrix &Matrix::operator=(const Matrix &mat)
+    Matrix &Matrix::operator=(const Matrix &mat)
     {
         if (mat.size > size)
         {
             if (m != buff)
-                delete[] m;
+                std::free(m);
             if (mat.size > buff_size)
-                m = new double[mat.size];
+                m = (double*)std::aligned_alloc(32, mat.size * sizeof(double));
             else
                 m = buff;
         }
         row = mat.row, col = mat.col, size = mat.size, transposed = mat.transposed;
         memcpy(m, mat.m, size * sizeof(double));
+        return *this;
     }
 
     /* --------- SUM --------- */
 
-    inline Matrix Matrix::operator+(const Matrix &m) const
+    Matrix Matrix::operator+(const Matrix &m) const
     {
         if (row != m.row || col != m.col)
             throw std::length_error("Matrix sizes not matching in sum operation");
@@ -192,7 +236,7 @@ namespace Algebra
         return sum;
     }
 
-    inline Matrix Matrix::operator+(double s) const
+    Matrix Matrix::operator+(double s) const
     {
         Matrix sum(row, col);
         for (int i = 0; i < size; i++)
@@ -201,7 +245,16 @@ namespace Algebra
         return sum;
     }
 
-    inline Matrix &Matrix::operator+=(const Matrix &m)
+    Matrix operator+(double s, const Matrix& mat)
+    {
+        Matrix sum(mat.rows, mat.cols);
+        for (int i = 0; i < mat.size; i++)
+            sum.m[i] = mat.m[i] + s;
+        sum.transposed = mat.transposed;
+        return sum;
+    }
+
+    Matrix &Matrix::operator+=(const Matrix &m)
     {
         if (row != m.row || col != m.col)
             throw std::length_error("Matrix sizes not matching in sum operation");
@@ -219,7 +272,7 @@ namespace Algebra
         return *this;
     }
 
-    inline Matrix &Matrix::operator+=(double s)
+    Matrix &Matrix::operator+=(double s)
     {
         for (int i = 0; i < size; i++)
             m[i] += s;
@@ -228,7 +281,7 @@ namespace Algebra
 
     /* --------- SUB --------- */
 
-    inline Matrix Matrix::operator-(const Matrix &m) const
+    Matrix Matrix::operator-(const Matrix &m) const
     {
         if (row != m.row || col != m.col)
             throw std::length_error("Matrix sizes not matching in sub operation");
@@ -250,7 +303,24 @@ namespace Algebra
         return sub;
     }
 
-    inline Matrix Matrix::operator-(double s) const
+    inline Matrix Matrix::operator-() const
+    {
+        Matrix sub(row, col);
+        for (size_t i = 0; i < size; i++)
+            sub.m[i] = -m[i];
+        return sub;        
+    }
+
+    Matrix operator-(double s, const Matrix& mat)
+    {
+        Matrix sub(mat.rows, mat.cols);
+        for (int i = 0; i < mat.size; i++)
+            sub.m[i] = mat.m[i] - s;
+        sub.transposed = mat.transposed;
+        return sub;
+    }
+
+    Matrix Matrix::operator-(double s) const
     {
         Matrix sub(row, col);
         for (int i = 0; i < size; i++)
@@ -259,7 +329,7 @@ namespace Algebra
         return sub;
     }
 
-    inline Matrix &Matrix::operator-=(const Matrix &m)
+    Matrix &Matrix::operator-=(const Matrix &m)
     {
         if (row != m.row || col != m.col)
             throw std::length_error("Matrix sizes not matching in subtraction operation");
@@ -277,7 +347,7 @@ namespace Algebra
         return *this;
     }
 
-    inline Matrix &Matrix::operator-=(double s)
+    Matrix &Matrix::operator-=(double s)
     {
         for (int i = 0; i < size; i++)
             m[i] -= s;
@@ -286,36 +356,54 @@ namespace Algebra
 
     /* --------- MULT --------- */
 
-    inline Matrix Matrix::operator*(const Matrix &m) const
+    Matrix Matrix::operator*(const Matrix &m) const
     {
         if (col != m.row)
             throw std::length_error("Matrix sizes not matching in multiplication operation");
         Matrix mul(row, m.col);
-        memset(mul.m, 0, row * m.col * sizeof(double));
         if (!transposed && !m.transposed)
             for (int i = 0; i < row; i++)
                 for (int j = 0; j < m.col; j++)
+                {
+                    double& sum = mul.m[i * mul.col + j];
+                    sum = 0;
                     for (int k = 0; k < col; k++)
-                        mul.m[i * mul.col + j] += this->m[i * col + k] * m.m[k * m.col + j];
+                        sum += this->m[i * col + k] * m.m[k * m.col + j];
+                }
         else if (!transposed && m.transposed)
             for (int i = 0; i < row; i++)
                 for (int j = 0; j < m.col; j++)
+                {
+                    double& sum = mul.m[i * mul.col + j];
+                    sum = 0;
                     for (int k = 0; k < col; k++)
-                        mul.m[i * mul.col + j] += this->m[i * col + k] * m.m[k + j * m.row];
+                        sum += this->m[i * col + k] * m.m[k + j * m.row];
+                }
         else if (transposed && !m.transposed)
-            for (int i = 0; i < row; i++)
+        {
+            for (int j = 0; j < m.col; j++)
+                for (int i = 0; i < row; i++)
+                    mul.m[i + j * mul.row] = this->m[i] * m.m[j];
+
+            for (int k = 1; k < col; k++)
                 for (int j = 0; j < m.col; j++)
-                    for (int k = 0; k < col; k++)
-                        mul.m[i * mul.col + j] += this->m[i + k * row] * m.m[k * m.col + j];
+                    for (int i = 0; i < row; i++)
+                        mul.m[i + j * mul.row] += this->m[i + k * row] * m.m[k * m.col + j];
+            mul.transposed = true;
+        }
         else
             for (int i = 0; i < row; i++)
                 for (int j = 0; j < m.col; j++)
+                {
+                    double& sum = mul.m[i * mul.col + j];
+                    sum = 0;
                     for (int k = 0; k < col; k++)
-                        mul.m[i * mul.col + j] += this->m[i + k * row] * m.m[k + j * m.row];
+                        sum += this->m[i + k * row] * m.m[k + j * m.row];
+                }
         return mul;
     }
 
-    inline Matrix Matrix::operator*(double s) const
+    Matrix Matrix::operator*(double s) const
     {
         Matrix mul(row, col);
         for (int i = 0; i < size; i++)
@@ -324,7 +412,16 @@ namespace Algebra
         return mul;
     }
 
-    inline Matrix &Matrix::operator*=(const Matrix &m)
+    Matrix operator*(double s, const Matrix& mat)
+    {
+        Matrix mul(mat.rows, mat.cols);
+        for (int i = 0; i < mat.size; i++)
+            mul.m[i] = mat.m[i] * s;
+        mul.transposed = mat.transposed;
+        return mul;
+    }
+
+    Matrix &Matrix::operator*=(const Matrix &m)
     {
         if (col != m.row)
             throw std::length_error("Matrix sizes not matching in multiplication operation");
@@ -333,47 +430,85 @@ namespace Algebra
         if (this->m != buff && col * m.row <= buff_size)
             new_m = buff;
         else
-            new_m = new double[row * m.col];
-
-        memset(new_m, 0, row * m.col * sizeof(double));
+            new_m = (double*)std::aligned_alloc(32, row * m.col * sizeof(double));
 
         if (!transposed && !m.transposed)
             for (int i = 0; i < row; i++)
                 for (int j = 0; j < m.col; j++)
+                {
+                    int sum = 0;
                     for (int k = 0; k < col; k++)
-                        new_m[i * m.col + j] += this->m[i * col + k] * m.m[k * m.col + j];
+                        sum += this->m[i * col + k] * m.m[k * m.col + j];
+                    new_m[i * m.col + j] = sum;
+                }
         else if (!transposed && m.transposed)
             for (int i = 0; i < row; i++)
                 for (int j = 0; j < m.col; j++)
+                {
+                    int sum = 0;
                     for (int k = 0; k < col; k++)
-                        new_m[i * m.col + j] += this->m[i * col + k] * m.m[k + j * m.row];
+                        sum += this->m[i * col + k] * m.m[k + j * m.row];
+                    new_m[i * m.col + j] = sum;
+                }
         else if (transposed && !m.transposed)
-            for (int i = 0; i < row; i++)
+        {
+            for (int j = 0; j < m.col; j++)
+                for (int i = 0; i < row; i++)
+                    new_m[i + j * row] = this->m[i] * m.m[j];
+
+            for (int k = 1; k < col; k++)
                 for (int j = 0; j < m.col; j++)
-                    for (int k = 0; k < col; k++)
-                        new_m[i * m.col + j] += this->m[i + k * row] * m.m[k * m.col + j];
+                    for (int i = 0; i < row; i++)
+                        new_m[i + j * row] += this->m[i + k * row] * m.m[k * m.col + j];
+            transposed = true;
+        }
         else
             for (int i = 0; i < row; i++)
                 for (int j = 0; j < m.col; j++)
+                {
+                    int sum = 0;
                     for (int k = 0; k < col; k++)
-                        new_m[i * m.col + j] += this->m[i + k * row] * m.m[k + j * m.row];
+                        sum += this->m[i + k * row] * m.m[k + j * m.row];
+                    new_m[i * m.col + j] = sum;
+                }
 
         if (this->m != buff)
-            delete[] this->m;
+            free(this->m);
         this->m = new_m;
         return *this;
     }
 
-    inline Matrix &Matrix::operator*=(double s)
+    Matrix &Matrix::operator*=(double s)
     {
         for (int i = 0; i < size; i++)
             m[i] *= s;
         return *this;
     }
 
-    /* --------- MULT --------- */
+    /* --------- DIV --------- */
 
-    inline Matrix Matrix::operator/(double s) const
+    inline Matrix Matrix::operator/(const Matrix &mat)
+    {
+        if (row != mat.row || col != mat.col)
+            throw std::length_error("Matrix sizes not matching in division operation");
+        Matrix div(row, col);
+        if (transposed == mat.transposed)
+            for (size_t i = 0; i < size; i++)
+                div.m[i] = m[i] / mat.m[i];
+        else if (!transposed)
+            for (size_t i = 0; i < row; i++)
+                for (size_t j = 0; j < col; j++)
+                    div.m[i * col + j] = m[i * col + j] / mat.m[j * row + i];
+        else
+            for (size_t i = 0; i < row; i++)
+                for (size_t j = 0; j < col; j++)
+                    div.m[i * col + j] = m[i + j * row] / mat.m[i * col + j];
+
+        div.transposed = transposed;
+        return div;
+    }
+
+    Matrix Matrix::operator/(double s) const
     {
         Matrix div(row, col);
         for (int i = 0; i < size; i++)
@@ -382,11 +517,18 @@ namespace Algebra
         return div;
     }
 
-    inline Matrix &Matrix::operator/=(double s)
+    Matrix &Matrix::operator/=(double s)
     {
         for (int i = 0; i < size; i++)
             m[i] /= s;
         return *this;
+    }
+
+    Matrix::operator double()
+    {
+        if (row != 1 || col != 1)
+            throw std::length_error("Matrix is not 1x1 in double cast");
+        return m[0];
     }
 
     double Matrix::norm()
@@ -397,7 +539,25 @@ namespace Algebra
         return sqrt(sum);
     }
 
-    inline Matrix Matrix::hom()
+    double Matrix::max()
+    {
+        double max = m[0];
+        for(int i = 0; i < size; i++)
+            if(m[i] > max) max = m[i];
+        return max;
+    }
+
+
+    double Matrix::absMax()
+    {
+        double max = 0;
+        for(int i = 0; i < size; i++)
+            if(std::abs(m[i]) > max) max = std::abs(m[i]);
+        return max;
+    }
+
+
+    Matrix Matrix::hom() const
     {
         Matrix hv(size + 1);
         memcpy(hv.m, m, size * sizeof(double));
@@ -406,7 +566,7 @@ namespace Algebra
         return hv;
     }
 
-    inline Matrix Matrix::hom_i()
+    Matrix Matrix::hom_i() const
     {
         Matrix hv(size - 1);
         for (size_t i = 0; i < size - 1; i++)
@@ -415,12 +575,35 @@ namespace Algebra
         return hv;
     }
 
-    inline double &Matrix::operator[](size_t i)
+    Matrix Matrix::solve(const Matrix &b)
+    {
+        return Matrix(0);
+    }
+
+    std::tuple<Matrix, Matrix, Matrix> Matrix::svd()
+    {
+        return {Matrix(0), Matrix(0), Matrix(0)};
+    }
+
+    void Matrix::reshape(size_t row, size_t col)
+    {
+        if (size != row * col)
+            throw std::length_error("Matrix columns not matching for vertical stacking");
+
+        if (!transposed)
+            this->row = row, this->col = col;
+        else
+        {
+            // todo
+        }
+    }
+
+    double &Matrix::operator[](size_t i)
     {
         return m[i];
     }
 
-    inline double &Matrix::val(size_t row, size_t col)
+    double &Matrix::val(size_t row, size_t col)
     {
         if (row >= this->row || col >= this->col)
             throw std::out_of_range("Matrix[] : index is out of range");
@@ -430,7 +613,7 @@ namespace Algebra
             return m[row * this->col + col];
     }
 
-    inline Matrix &Matrix::vstack(const Matrix &mat)
+    Matrix &Matrix::vstack(const Matrix &mat)
     {
         if (mat.col != col)
             throw std::length_error("Matrix columns not matching for vertical stacking");
@@ -440,7 +623,7 @@ namespace Algebra
         if (col * (row + mat.row) < buff_size && m != buff)
             new_buf = buff;
         else
-            new_buf = new double[col * (row + mat.row)];
+            new_buf = (double*)std::aligned_alloc(32, col * (row + mat.row) * sizeof(double));
         
         int row_off = transposed ? 1 : col, col_off = transposed ? row : 1;
         for (int i = 0; i < row; i++)
@@ -452,7 +635,7 @@ namespace Algebra
             for (int j = 0; j < col; j++)
                 new_buf[size + i*col + j] = mat.m[i*row_off + j*col_off];
 
-        if (m != buff) delete[] m;
+        if (m != buff) std::free(m);
         m = new_buf;
         row += mat.row;
         size += mat.size;
@@ -461,7 +644,38 @@ namespace Algebra
         return *this;
     }
 
-    inline Matrix &Matrix::hstack(const Matrix &mat)
+    Matrix vstack(const std::vector<Matrix>& mats)
+    {
+        if (mats.empty()) return Matrix(0, 0);
+        size_t col = mats[0].col;
+        size_t row = 0;
+        for (auto& mat : mats)
+        {
+            if (mat.col != col)
+                throw std::length_error("Matrix columns not matching for vertical stacking");
+            row += mat.row;
+        }
+
+        Matrix stack(row, col);
+        size_t off = 0;
+        for (auto& mat : mats)
+        {
+            if (mat.transposed)
+                for (size_t i = 0; i < mat.row; i++)
+                    for (size_t j = 0; j < col; j++)
+                        stack.m[i * col + j + off] = mat.m[i + j * row];
+            else
+                for (size_t i = 0; i < mat.row; i++)
+                    for (size_t j = 0; j < col; j++)
+                        stack.m[i * col + j + off] = mat.m[i * col + j];
+            
+            off += mat.row * col;
+        }
+        
+        return stack;
+    }
+
+    Matrix &Matrix::hstack(const Matrix &mat)
     {
         if (mat.col != col)
             throw std::length_error("Matrix rows not matching for horizontal stacking");
@@ -471,7 +685,7 @@ namespace Algebra
         if (col * (row + mat.row) < buff_size && m != buff)
             new_buf = buff;
         else
-            new_buf = new double[row * (col + mat.col)];
+            new_buf = (double*)std::aligned_alloc(32, row * (col + mat.col) * sizeof(double));
         
         int row_off = transposed ? 1 : col, col_off = transposed ? row : 1;
         for (int j = 0; j < col; j++)
@@ -483,7 +697,7 @@ namespace Algebra
             for (int i = 0; i < mat.row; i++)
                 new_buf[size + i + j*row] = mat.m[i*row_off + j*col_off];
 
-        if (m != buff) delete[] m;
+        if (m != buff) std::free(m);
         m = new_buf;
         col += mat.col;
         size += mat.size;
@@ -492,27 +706,145 @@ namespace Algebra
         return *this;
     }
 
-    inline void Matrix::print()
+    Matrix hstack(const std::vector<Matrix>& mats)
+    {
+        if (mats.empty()) return Matrix(0, 0);
+        size_t row = mats[0].row;
+        size_t col = 0;
+        for (auto& mat : mats)
+        {
+            if (mat.row != row)
+                throw std::length_error("Matrix columns not matching for vertical stacking");
+            col += mat.col;
+        }
+
+        Matrix stack(row, col);
+        stack.transpose();
+        size_t off = 0;
+        for (auto& mat : mats)
+        {
+            if (mat.transposed)
+                for (size_t i = 0; i < row; i++)
+                    for (size_t j = 0; j < mat.col; j++)
+                        stack.m[i + j * row + off] = mat.m[i + j * row];
+            else
+                for (size_t i = 0; i < row; i++)
+                    for (size_t j = 0; j < mat.col; j++)
+                        stack.m[i + j * row + off] = mat.m[i * col + j];
+            
+            off += mat.col * row;
+        }
+        
+        return stack;
+    }
+
+    void Matrix::setCol(int64_t c, const std::initializer_list<double> &lst)
+    {
+        if (lst.size() > row)
+            throw std::length_error("Matrix column length not matching in Matrix::setCol");
+        if (c < 0) c += col;
+        if (c >= col || c < 0)
+            throw std::out_of_range("Matrix column out of range in Matrix::setCol");
+
+        if (transposed) 
+            std::copy(lst.begin(), lst.end(), m + c * row);
+        else
+        {
+            int i = 0; 
+            for(auto n : lst)
+                m[c + i++ * row] = n;
+        }
+            
+    }
+
+    void Matrix::setRow(int64_t r, const std::initializer_list<double> &lst)
+    {
+        if (lst.size() > col)
+            throw std::length_error("Matrix row length not matching in Matrix::setRow");
+        if (r < 0) r += row;
+        if (r >= row || r < 0)
+            throw std::out_of_range("Matrix row out of range in Matrix::setRow");
+
+        if (!transposed) 
+            std::copy(lst.begin(), lst.end(), m + r * col);
+        else
+        {
+            int i = 0; 
+            for(auto n : lst)
+                m[r + i++ * col] = n;
+        }
+            
+    }
+
+    Matrix Matrix::getCol(int64_t c)
+    {
+        if (c < 0) c += col;
+        if (c >= col || c < 0)
+            throw std::out_of_range("Matrix column out of range in Matrix::getCol");
+        Matrix v(row);
+        if (transposed)
+            memcpy(v.m, m + c * row, row);
+        else
+            for (size_t i = 0; i < row; i++)
+                v.m[i] = m[c + i * col];
+        return v;
+    }
+
+    Matrix Matrix::getRow(int64_t r)
+    {
+        if (r < 0) r += row;
+        if (r >= row || r < 0)
+            throw std::out_of_range("Matrix row out of range in Matrix::getRow");
+        Matrix v(col);
+        if (transposed)
+            for (size_t i = 0; i < col; i++)
+                v.m[i] = m[r + i * row];
+        else
+            memcpy(v.m, m + r * col, col);
+        std::swap(v.row, v.col);
+        return v;
+    }
+
+    void Matrix::print()
     {
         std::cout << "[";
         for (int i = 0; i < this->row; i++)
         {
             for (int j = 0; j < this->col; j++)
+            {
+                double num;
                 if (transposed)
-                    std::cout << m[j * this->row + i] << " ";
+                    num = m[j * this->row + i];
                 else
-                    std::cout << m[i * this->col + j] << " ";
+                    num = m[i * this->col + j];
+                std::cout << num << " ";
+            }
             if (i < this->row - 1) std::cout << "\n ";
         }
         std::cout << "]\n";
     }
 
-    inline Matrix Matrix::T()
+    Matrix Matrix::T()
     {
         return {*this, true};
     }
 
-    using Vector = Matrix;
+    void zero(Matrix& mat)
+    {
+        memset(mat.m, 0, mat.size * sizeof(double));
+    }
+
+    Matrix identity(size_t size)
+    {
+        Matrix I(size, size);
+        zero(I);
+        for (size_t i = 0; i < size; i++)
+            I.m[i * size + i] = 1.0;
+        return I;
+    }
+
+#endif
+
 
 #ifdef ALGEBRA_SHORT_NAMES
     using Vec = Matrix;
