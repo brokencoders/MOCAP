@@ -79,7 +79,7 @@ Algebra::Vector minimizelm(std::function<Algebra::Vector(Algebra::Vector)> f,
 
     for (int k = 0; !found && k < k_max; k++)
     {
-        Algebra::Vector h_lm = (A + u * Algebra::identity(A.rows)).solve(-g);
+        Algebra::Vector h_lm = (A + u * Algebra::identity(A.rows())).solve(-g);
         if (h_lm.norm() <= e2 * (x.norm() + e2))
             found = true;
         else
