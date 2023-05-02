@@ -10,18 +10,11 @@
 #include <cstdlib>
 #include <immintrin.h>
 #include <tuple>
+#include <algorithm>
 #include <cfloat>
 
 namespace Algebra
 {
-    inline size_t closest_mult(size_t n, size_t mult)
-    {
-        if (n % mult != 0)
-            return n + mult - n % mult;
-        else 
-            return n;
-    }
-
     class Matrix
     {
     public:
@@ -66,10 +59,11 @@ namespace Algebra
         Matrix& operator/=(const Matrix& m);
         Matrix& operator/=(double s);
 
-        operator double() const;
+        explicit operator double() const;
 
         double norm() const;
         double normSquare() const;
+        Matrix trace() const;
 
         double max() const;
         double absMax() const;
@@ -81,7 +75,11 @@ namespace Algebra
 
         Matrix solve(Matrix b) const;
         Matrix cholesky() const;
+        Matrix partialQR(int64_t t = 0, int64_t l = 0, int64_t b = -1, int64_t r = -1) const;
+        void applyHouseholderQ(const Matrix& R);
         std::tuple<Matrix, Matrix> QR() const;
+        std::tuple<Matrix, Matrix> tridiagQR() const;
+        std::tuple<Matrix, Matrix> implicitelyShiftedQR(const double threshold = 1e-12) const;
         std::tuple<Matrix, Matrix, Matrix> svd() const;
 
         Matrix& reshape(size_t row, size_t col);
@@ -112,15 +110,19 @@ namespace Algebra
         static void realTranspose(const double* A, double* B, const size_t r, const size_t c, const size_t lda, const size_t ldb);
         static void realTransposeInPlace(double*& A, const size_t r, const size_t c, const size_t lda, bool local_buff);
         static Matrix householderReflect(const Matrix& u);
-        void householderReflectSubMat(const Matrix& u, size_t r, size_t c);
-        void householderReflectSubMatForward(const Matrix& u, size_t r, size_t c, bool store = true);
+        void householderReflectSubMatLeft(const Matrix& u, size_t r, size_t c, size_t cols = 0);
+        void householderReflectSubMatRight(const Matrix& u, size_t r, size_t c, size_t rows = 0);
+        void householderReflectSubMatForwardLeft(const Matrix& u, size_t r, size_t c, bool store = true);
+        void householderReflectSubMatForwardRight(const Matrix& u, size_t r, size_t c, bool store = true);
+        void givensRotateLeft(double c, double s, int64_t r1, int64_t r2, int64_t l = 0, int64_t r = -1);
+        void givensRotateRight(double c, double s, int64_t c1, int64_t c2, int64_t t = 0, int64_t b = -1);
 
     private:
         double *m;
         size_t row, col, size;
 
         static const size_t buff_size = 16;
-        alignas(32) double buff[buff_size];
+        double buff[buff_size];
 
     public:
         size_t rows() const { return row; }
@@ -129,6 +131,9 @@ namespace Algebra
 
         friend void zero(Matrix&);
         friend Matrix  identity(size_t);
+        friend Matrix  identity(size_t, size_t);
+        friend Matrix  rodriguesToMatrix(Matrix);
+        friend Matrix  matrixToRodrigues(Matrix);
         friend Matrix  operator+(double, const Matrix&);
         friend Matrix& operator+(double, Matrix&&);
         friend Matrix  operator-(double, const Matrix&);
@@ -140,8 +145,12 @@ namespace Algebra
         friend Matrix  hstack(const std::vector<Matrix>& mats);
     };
 
+    using Vector = Matrix;
     void zero(Matrix& mat);
     Matrix identity(size_t size);
+    Matrix identity(size_t r, size_t c);
+    Matrix rodriguesToMatrix(Matrix rodrigues_vector);
+    Matrix matrixToRodrigues(Matrix rotation_matrix);
 
 /* 
     class MatrixView
@@ -162,7 +171,6 @@ namespace Algebra
         friend class Matrix;
     };
  */
-    using Vector = Matrix;
 
 #ifdef ALGEBRA_IMPL
 
@@ -172,7 +180,7 @@ namespace Algebra
         if (size <= buff_size)
             m = buff;
         else
-            m = (double*)std::aligned_alloc(32, size * sizeof(double));
+            m = new double[size];
     }
 
     Matrix::Matrix(size_t row, size_t col)
@@ -181,7 +189,7 @@ namespace Algebra
         if (size <= buff_size)
             m = buff;
         else
-            m = (double*)std::aligned_alloc(32, size * sizeof(double));
+            m = new double[size];
     }
 
     Matrix::Matrix(const std::initializer_list<double> &lst)
@@ -190,7 +198,7 @@ namespace Algebra
         if (size <= buff_size)
             m = buff;
         else
-            m = (double*)std::aligned_alloc(32, size * sizeof(double));
+            m = new double[size];
         std::copy(lst.begin(), lst.end(), m);
     }
 
@@ -200,7 +208,7 @@ namespace Algebra
         if (size <= buff_size)
             m = buff;
         else
-            m = (double*)std::aligned_alloc(32, size * sizeof(double));
+            m = new double[size];
         std::copy(lst.begin(), std::min(lst.end(), lst.begin() + size), m);
         if (fill && lst.size() < size)
             std::fill(m + lst.size(), m + size, 0.0);
@@ -212,7 +220,7 @@ namespace Algebra
         if (size <= buff_size)
             m = buff;
         else
-            m = (double*)std::aligned_alloc(32, size * sizeof(double));
+            m = new double[size];
         std::copy(mat.m, mat.m + size, m);
         // std::cout << "Matrix copy constructor\n";
     }
@@ -223,9 +231,9 @@ namespace Algebra
         if (size <= buff_size)
             m = buff;
         else
-            m = (double*)std::aligned_alloc(32, size * sizeof(double));
+            m = new double[size];
         if (row > 1 && col > 1)
-            realTranspose(mat.m, m, mat.row, mat.col, mat.row, row);
+            realTranspose(mat.m, m, mat.row, mat.col, mat.col, col);
         else
             std::copy(mat.m, mat.m + mat.size, m);
     }
@@ -259,7 +267,7 @@ namespace Algebra
         if (m != buff)
             std::free(m);
         if (mat.size > buff_size)
-            m = (double*)std::aligned_alloc(32, mat.size * sizeof(double));
+            m = new double[mat.size];
         else
             m = buff;
 
@@ -388,7 +396,10 @@ namespace Algebra
         if (col != mat.row)
             throw std::length_error("Matrix sizes not matching in multiplication operation");
         Matrix mul(row, mat.col);
-        double* t = (double*)std::aligned_alloc(32, size * sizeof(double));
+        double tmp_buff[buff_size];
+        double* t;
+        if (row*col < buff_size) t = tmp_buff;
+        else t = new double[size];
         realTranspose(m, t, row, col, col, row);
         
         for (size_t i = 0; i < row; i++)
@@ -398,12 +409,13 @@ namespace Algebra
         for (size_t k = 1; k < col; k++)
             for (size_t i = 0; i < row; i++)
             {
-                auto& t_ik = t[i + k * row];
+                double t_ik = t[i + k * row];
                 for (size_t j = 0; j < mat.col; j++)
                     mul.m[i * mul.col + j] += t_ik * mat.m[k * mat.col + j];
             }
         
-        std::free(t);
+        if (t != tmp_buff)
+            std::free(t);
         return mul;
     }
 
@@ -428,43 +440,45 @@ namespace Algebra
         return mat.operator*=(s);
     }
 
-    Matrix& Matrix::operator*=(const Matrix &mat)
+    Matrix& Matrix::operator*=(const Matrix& mat)
     {
         if (col != mat.row)
             throw std::length_error("Matrix sizes not matching in multiplication operation");
 
-        double *new_m;
-        alignas(32) double tmp_buff[buff_size];
-        if (row * mat.col <= buff_size)
-        {
-            new_m = buff;
-            if (this->m == buff)
-                realTranspose(m, tmp_buff, row, col, row, col);
-            else
-                realTransposeInPlace(m, row, col, col, m == buff);
-        }
-        else
-        {
-            new_m = (double*)std::aligned_alloc(32, row * mat.col * sizeof(double));
-            realTransposeInPlace(m, row, col, col, m == buff);
-        }
+        double *new_m, *t;
+        double tmp_buff[buff_size], new_tmp_buff[buff_size];
+        if (row*col < buff_size) t = tmp_buff;
+        else t = new double[size];
+        realTranspose(m, t, row, col, col, row);
+        
+        if (row*mat.col < buff_size) new_m = new_tmp_buff;
+        else new_m = new double[row*mat.col];
 
         for (size_t i = 0; i < row; i++)
             for (size_t j = 0; j < mat.col; j++)
-                new_m[i * mat.col + j] = m[i] * mat.m[j];
+                new_m[i * mat.col + j] = t[i] * mat.m[j];
 
         for (size_t k = 1; k < col; k++)
             for (size_t i = 0; i < row; i++)
             {
-                auto& t_ik = m[i + k * row];
+                double t_ik = t[i + k * row];
                 for (size_t j = 0; j < mat.col; j++)
                     new_m[i * mat.col + j] += t_ik * mat.m[k * mat.col + j];
             }
 
-        if (this->m != buff)
-            free(this->m);
-        this->m = new_m;
         col = mat.col;
+        size = row*col;
+        if (t != tmp_buff)
+            std::free(t);
+        if (m != buff)
+            free(m);
+        if (new_m == new_tmp_buff)
+        {
+            std::copy(new_m, new_m + size, buff);
+            m = buff;
+        }
+        else
+            m = new_m;
         return *this;
     }
 
@@ -550,6 +564,16 @@ namespace Algebra
         return sum;
     }
 
+    Matrix Matrix::trace() const
+    {
+        size_t min = std::min(row, col);
+        Matrix tr(min);
+        std::swap(tr.row, tr.col);
+        for (size_t i = 0; i < min; i++)
+            tr.m[i] = m[i*col+i];
+        return tr;
+    }
+
     double Matrix::max() const
     {
         double max = m[0];
@@ -592,7 +616,7 @@ namespace Algebra
         }
         else
         {
-            double* new_buf = (double*)std::aligned_alloc(32, size+1);
+            double* new_buf = new double[size+1];
             std::copy(m, m + size, new_buf);
             std::free(m);
             m = new_buf;
@@ -637,8 +661,8 @@ namespace Algebra
             if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
             {
                 v /= v[0];
-                R.householderReflectSubMatForward(v, i,i, false);
-                b.householderReflectSubMat(v, i,0);
+                R.householderReflectSubMatForwardLeft(v, i,i, false);
+                b.householderReflectSubMatLeft(v, i,0);
             }
         }
         for (int64_t i = x.row - 1; i >= 0; i--)
@@ -685,6 +709,37 @@ namespace Algebra
         return L.T();
     }
 
+    inline Matrix Matrix::partialQR(int64_t t, int64_t l, int64_t b, int64_t r) const
+    {
+        if (t < 0) t += row;
+        if (l < 0) l += col;
+        if (b < 0) b += row;
+        if (r < 0) r += col;
+        if (l >= col || l < 0 || r >= col || r < 0 || t >= row || t < 0 || b >= row || b < 0)
+            throw std::out_of_range("Matrix coordinates out of range in Matrix::partialQR");
+        if (t > b || l > r)
+            throw std::out_of_range("Matrix coordinates negatively overlapping in Matrix::partialQR &&");
+
+        Matrix R = (*this).subMatrix(t,l,b,r);
+        auto min = std::min(R.row-1, R.col);
+
+        for (size_t i = 0; i < min; i++)
+        {
+            Vector v = R.subMatrix(i,i, -1,i);
+            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
+            {
+                v /= v[0];
+                R.householderReflectSubMatForwardLeft(v, i,i);
+            }
+        }
+        return R;
+    }
+
+    inline void Matrix::applyHouseholderQ(const Matrix& R)
+    {
+    }
+
     std::tuple<Matrix, Matrix> Matrix::QR() const
     {
         std::tuple<Matrix, Matrix> tpl = {identity(row), *this};
@@ -698,7 +753,7 @@ namespace Algebra
             if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
             {
                 v /= v[0];
-                R.householderReflectSubMatForward(v, i,i);
+                R.householderReflectSubMatForwardLeft(v, i,i);
             }
         }
         for (int64_t i = min - 1; i >= 0; i--)
@@ -707,7 +762,7 @@ namespace Algebra
             if (u.m[0] > DBL_EPSILON || u.m[0] < -DBL_EPSILON)
             {
                 u.m[0] = 1.;
-                Q.householderReflectSubMat(u, i,i);
+                Q.householderReflectSubMatLeft(u, i,i);
             }
         }
 
@@ -716,9 +771,176 @@ namespace Algebra
         return tpl;
     }
 
+    inline std::tuple<Matrix, Matrix> Matrix::tridiagQR() const
+    {
+        std::tuple<Matrix, Matrix> tpl = {identity(row), *this};
+        auto& [Q, R] = tpl;
+
+        for (size_t i = 0; i < row-1; i++)
+        {
+            double x1 = R.m[i*col + i], x2 = R.m[(i+1)*col + i];
+            R.m[i*col + i] = sqrt(x1*x1+x2*x2);
+            R.m[(i+1)*col + i] = 0;
+            double norm_i = 1./R.m[i*col + i];
+            double c = x1*norm_i, s = -x2*norm_i;
+            double a = R.m[i*col + i+1],
+                   d = R.m[(i+1)*col + i+1],
+                   e = R.m[(i+1)*col + i+2];
+            R.m[i*col + i+1] = c*a-s*d;
+            R.m[(i+1)*col + i+1] = s*a+c*d;
+            if (i+2 < row)
+            {
+                R.m[i*col + i+2] = -s*e;
+                R.m[(i+1)*col + i+2] = c*e;
+            }
+            Q.givensRotateRight(c, -s, i, i+1);
+        }
+
+        return tpl;
+    }
+
+    std::tuple<Matrix, Matrix> Matrix::implicitelyShiftedQR(const double threshold) const
+    {
+        if (row != col)
+            throw std::length_error("Matrix not square in Matrix::implicitelyShiftedQR()");
+
+        Matrix V = identity(row);
+        Matrix A = *this;
+        size_t shift = col-1;
+        int it=0;
+        
+        for (size_t i = 0; i < col-2; i++)
+        {
+            Vector v = A.subMatrix(i+1,i, -1,i);
+            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
+            {
+                v /= v[0];
+                A.householderReflectSubMatForwardLeft(v, i+1,i);
+                A.householderReflectSubMatForwardRight(v, i,i+1);
+            }
+        }
+        for (int64_t i = col-3; i >= 0; i--)
+        {
+            Vector u = A.subMatrix(i+1,i, -1,i);
+            if (u.m[0] > DBL_EPSILON || u.m[0] < -DBL_EPSILON)
+            {
+                u.m[0] = 1.;
+                V.householderReflectSubMatLeft(u, i+1,i);
+            }
+        }
+        for (size_t i = 0; i < row-2; i++)
+            std::fill(A.m + i*col + i+2, A.m + (i+1)*col, 0.);
+        for (size_t i = 2; i < row; i++)
+            std::fill(A.m + i*col, A.m + i*col + i-1, 0.);
+            
+        while (shift > 0)
+        {
+            double Amm = A[shift*col + shift];
+            //for (size_t j = 0; j <= shift; j++)
+            //    A[j*col+j] -= Amm;
+            //
+            //auto [Q,R] = A.subMatrix(0,0,shift,shift).tridiagQR();
+            //A.setSubMatrix(R*Q);
+            //V.setSubMatrix(V.subMatrix(0,0,-1,shift)*Q);
+            //
+            //for (size_t j = 0; j <= shift; j++)
+            //    A[j*col+j] += Amm;
+            
+            double x1 = A.m[0] - Amm, x2 = A.m[col];
+            double norm = std::hypot(x1,x2);
+            double c = x1/norm, s = -x2/norm;
+            if (s == 0.) break;
+            A.givensRotateLeft(c, s, 0,1, 0,3);
+            A.givensRotateRight(c, s, 0,1, 0,3);
+            V.givensRotateRight(c, s, 0,1);
+
+            for (size_t i = 0; i < shift-1; i++)
+            {
+                double x1 = A.m[(i+1)*col + i], x2 = A.m[(i+2)*col + i];
+                double norm = std::hypot(x1,x2);
+                if (norm == 0.) 
+                    break; 
+                double c = x1/norm, s = -x2/norm;
+                A.givensRotateLeft(c, s, i+1,i+2, i,i+3);
+                A.m[(i+2)*col + i] = 0.;
+                A.givensRotateRight(c, s, i+1,i+2, i,i+3);
+                A.m[i*col + i+2] = 0.;
+                V.givensRotateRight(c, s, i+1,i+2);
+            }
+            double error = A[shift*col + shift-1]*A[shift*col + shift-1];
+            //for (size_t j = 0; j < shift; j++)
+            //    error += A[shift*col + j]*A[shift*col + j];
+            //std::cout << "Error " << error << ", it: " << it << '\n';
+            if (error < threshold) shift--;
+            it++;
+        }
+        std::cout << it << " iterations\n";
+
+        return {V,A};
+    }
+
     std::tuple<Matrix, Matrix, Matrix> Matrix::svd() const
     {
-        return {Matrix(0), Matrix(0), Matrix(0)};
+        Matrix B = *this;
+        Matrix U = identity(row, col);
+        Matrix Vt = identity(col);
+        const double eps = 1e-6;
+
+        for (size_t i = 0; i < col; i++)
+        {
+            Vector v = B.subMatrix(i,i, -1,i);
+            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
+            {
+                v /= v[0];
+                B.householderReflectSubMatForwardLeft(v, i,i);
+            }
+            if (i < col - 1)
+            {
+                Vector v = B.subMatrix(i,i+1,i);
+                v[0] += v[0] < 0 ? -v.norm() : v.norm();
+                if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
+                {
+                    v /= v[0];
+                    B.householderReflectSubMatForwardRight(v, i,i+1);
+                }
+            }
+        }
+        for (int64_t i = col - 1; i >= 0; i--)
+        {
+            Vector u = B.subMatrix(i,i, -1,i);
+            if (u.m[0] > DBL_EPSILON || u.m[0] < -DBL_EPSILON)
+            {
+                u.m[0] = 1.;
+                U.householderReflectSubMatLeft(u, i,i);
+            }
+            if (i < col - 1)
+            {
+                Vector u = B.subMatrix(i,i+1,i);
+                if (u.m[0] > DBL_EPSILON || u.m[0] < -DBL_EPSILON)
+                {
+                    u.m[0] = 1.;
+                    Vt.householderReflectSubMatRight(u, i,i+1);
+                }
+            }
+        }
+        
+        for (size_t i = 1; i < row; i++)
+            std::fill(B.m + i*col, B.m + i*col + i, 0.);
+        for (size_t i = 0; i < col-1; i++)
+            std::fill(B.m + i*col + i + 2, B.m + (i+1)*col, 0.);
+
+        while (true)
+        {
+            for (size_t i = 0; i < col; i++)
+                if (abs(B.m[i*col + i+1]) < eps*(abs(B.m[i*col+i]) + abs(B.m[(i+1)*col+i+1])))
+                    B.m[i*col + i+1] = 0.;
+            
+                        
+        }
+
+        return {U, B, Vt};
     }
 
     Matrix& Matrix::reshape(size_t row, size_t col)
@@ -756,7 +978,7 @@ namespace Algebra
         if (col * (row + mat.row) < buff_size)
             new_buf = buff;
         else
-            new_buf = (double*)std::aligned_alloc(32, col * (row + mat.row) * sizeof(double));
+            new_buf = new double[col * (row + mat.row)];
         
         if (new_buf != m)
             std::copy(m, m + size, new_buf);
@@ -803,7 +1025,7 @@ namespace Algebra
         if (row * (col + mat.col) < buff_size)
             new_buf = buff;
         else
-            new_buf = (double*)std::aligned_alloc(32, row * (col + mat.col) * sizeof(double));
+            new_buf = new double[row * (col + mat.col)];
         
         if (new_buf == m)
             /* NOT parallelizable */
@@ -896,8 +1118,8 @@ namespace Algebra
         if (r >= row || r < 0 || c >= col || c < 0)
             throw std::out_of_range("Matrix row out of range in Matrix::setSubMatrix");
 
-        size_t endr = std::max(row - r, mat.row);
-        size_t endc = std::max(col - c, mat.col);
+        size_t endr = std::min(row - r, mat.row);
+        size_t endc = std::min(col - c, mat.col);
         for (size_t i = 0; i < endr; i++)
             std::copy(mat.m + i*mat.col, mat.m + i*mat.col + endc, m + (r+i)*col + c);
     }
@@ -933,7 +1155,7 @@ namespace Algebra
         }
         else if (col > 1)
         {
-            double* new_buf = (double*)std::aligned_alloc(32, row);
+            double* new_buf = new double[row];
             for (size_t i = 0; i < row; i++)
                 new_buf[i] = m[c + i*col];
             std::free(m);
@@ -976,7 +1198,7 @@ namespace Algebra
         }
         else if (row > 1)
         {
-            double* new_buf = (double*)std::aligned_alloc(32, col);
+            double* new_buf = new double[col];
             std::copy(m + r*col, m + (r+1)*col, new_buf);
             std::free(m);
             m = new_buf;
@@ -1005,6 +1227,7 @@ namespace Algebra
 
     void Matrix::print() const
     {
+        //std::cout.precision(17);
         std::cout << "[";
         for (size_t i = 0; i < this->row; i++)
         {
@@ -1065,13 +1288,13 @@ namespace Algebra
     {
         if (lb)
         {
-            alignas(32) double tmp_buff[buff_size];
+            double tmp_buff[buff_size];
             std::copy(A, A + r*c, tmp_buff);
             realTranspose(tmp_buff, A, r, c, lda, r);
         }
         else
         {
-            double* tmp_buff = (double*)std::aligned_alloc(32, r*c * sizeof(double));
+            double* tmp_buff = new double[r*c];
             realTranspose(A, tmp_buff, r, c, lda, r);
             std::free(A);
             A = tmp_buff;
@@ -1087,10 +1310,11 @@ namespace Algebra
         return ref;
     }
 
-    void Matrix::householderReflectSubMat(const Matrix &u, size_t r, size_t c)
+    void Matrix::householderReflectSubMatLeft(const Matrix &u, size_t r, size_t c, size_t len)
     {
+        if (len == 0 || len > col - c) len = col - c;
         double tau_i = 2 / u.normSquare();
-        Vector wt(1, col - c);
+        Vector wt(1, len);
 
         for (size_t i = 0; i < wt.size; i++)
         {
@@ -1106,7 +1330,29 @@ namespace Algebra
                 m[(r+i)*col + c + j] -= u.m[i] * wt.m[j];
     }
 
-    void Matrix::householderReflectSubMatForward(const Matrix &u, size_t r, size_t c, bool store)
+    void Matrix::householderReflectSubMatRight(const Matrix &u, size_t r, size_t c, size_t len)
+    {
+        if (len == 0 || len > row - r) len = row - r;
+        double tau_i = 2 / u.normSquare();
+        //Vector wt(len);
+
+        for (size_t i = 0; i < len; i++)
+        {
+            double wtmi = m[(r+i)*col + c];
+            for (size_t k = 1; k < u.size; k++)
+                wtmi += u.m[k] * m[(r+i)*col + c+k];
+            wtmi *= tau_i;
+            for (size_t j = 0; j < u.size; j++)
+                m[(r+i)*col + c + j] -= u.m[j] * wtmi;
+        }
+        //for (size_t i = 0; i < wt.size; i++)
+        //    m[(r+i)*col + c] -= wt.m[i];
+        //for (size_t i = 0; i < wt.size; i++)
+        //    for (size_t j = 0; j < u.size; j++)
+        //        m[(r+i)*col + c + j] -= u.m[j] * wt.m[i];
+    }
+
+    void Matrix::householderReflectSubMatForwardLeft(const Matrix &u, size_t r, size_t c, bool store)
     {
         double tau_i = 2 / u.normSquare(), theta = m[r*col + c];
         Vector wt(1, col - c - 1);
@@ -1136,6 +1382,74 @@ namespace Algebra
                 m[(r+i)*col + c+1 + j] -= u.m[i] * wt.m[j];
     }
 
+    void Matrix::householderReflectSubMatForwardRight(const Matrix &u, size_t r, size_t c, bool store)
+    {
+        double tau_i = 2 / u.normSquare(), theta = m[r*col + c];
+        Vector wt(row - r - 1);
+
+        for (size_t k = 1; k < u.size; k++)
+            theta += u.m[k] * m[r*col + c+k];
+        m[r*col + c] -= tau_i * theta;
+
+        if (store)
+            for (size_t i = 1; i < u.size; i++)
+                m[r*col + c+i] = u.m[i];
+        else
+            for (size_t i = 1; i < u.size; i++)
+                m[r*col + c+i] = 0;
+        
+        for (size_t i = 0; i < wt.size; i++)
+        {
+            wt.m[i] = m[(r+i+1)*col + c];
+            for (size_t k = 1; k < u.size; k++)
+                wt.m[i] += u.m[k] * m[(r+i+1)*col + c+k];
+            wt.m[i] *= tau_i;
+        }
+        for (size_t i = 0; i < wt.size; i++)
+            m[(r+i+1)*col + c] -= wt.m[i];
+        for (size_t i = 0; i < wt.size; i++)
+            for (size_t j = 1; j < u.size; j++)
+                m[(r+i+1)*col + c + j] -= u.m[j] * wt.m[i];
+    }
+
+    inline void Matrix::givensRotateLeft(double c, double s, int64_t r1, int64_t r2, int64_t l, int64_t r)
+    {
+        if (r1 < 0) r1 += row;
+        if (r2 < 0) r2 += row;
+        if (l < 0) l += row;
+        if (r < 0) r += row;
+        l = std::clamp<int64_t>(l, 0L, row-1);
+        r = std::clamp<int64_t>(r, 0L, row-1);
+        if (r1 >= row || r1 < 0 || r2 >= row || r2 < 0)
+            throw std::out_of_range("Matrix row indices out of range in Matrix::givensRotateLeft()");
+
+        for (size_t i = l; i <= r; i++)
+        {
+            double x1 = m[r1*col + i], x2 = m[r2*col + i];
+            m[r1*col + i] = c*x1 - s*x2;
+            m[r2*col + i] = s*x1 + c*x2;
+        }
+    }
+
+    inline void Matrix::givensRotateRight(double c, double s, int64_t c1, int64_t c2, int64_t t, int64_t b)
+    {
+        if (c1 < 0) c1 += col;
+        if (c2 < 0) c2 += col;
+        if (t < 0) t += row;
+        if (b < 0) b += row;
+        t = std::clamp<int64_t>(t, 0L, col-1);
+        b = std::clamp<int64_t>(b, 0L, col-1);
+        if (c1 >= col || c1 < 0 || c2 >= col || c2 < 0)
+            throw std::out_of_range("Matrix column indices out of range in Matrix::givensRotateRight()");
+
+        for (size_t i = t; i <= b; i++)
+        {
+            double x1 = m[i*col + c1], x2 = m[i*col + c2];
+            m[i*col + c1] = c*x1 - s*x2;
+            m[i*col + c2] = s*x1 + c*x2;
+        }
+    }
+
     void zero(Matrix& mat)
     {
         std::fill(mat.m, mat.m + mat.size, 0);
@@ -1148,6 +1462,75 @@ namespace Algebra
         for (size_t i = 0; i < size; i++)
             I.m[i * size + i] = 1.0;
         return I;
+    }
+
+    Matrix identity(size_t r, size_t c)
+    {
+        Matrix I(r, c);
+        zero(I);
+        auto min = std::min(r, c);
+        for (size_t i = 0; i < min; i++)
+            I.m[i * c + i] = 1.0;
+        return I;
+    }
+
+    Matrix rodriguesToMatrix(Matrix rod_v)
+    {
+        if (rod_v.col * rod_v.row != 3)
+            throw std::invalid_argument("Invalid Vector dimensions in Algebra::rodriguesToMatrix(Matrix)");
+        Matrix rot = identity(3);
+        double theta = rod_v.norm();
+        if (theta > DBL_EPSILON)
+        {
+            double costh = cos(theta), sinth = sin(theta);
+            rot.m[0] = rot.m[4] = rot.m[8] = costh;
+            rod_v /= theta;
+            for (size_t i = 0; i < 3; i++)
+                for (size_t j = 0; j < 3; j++)
+                    rot.m[i*3 + j] += (1 - costh) * rod_v.m[j]*rod_v.m[i];
+            rod_v *= sinth;
+            rot.m[1] -= rod_v.m[2], rot.m[2] += rod_v.m[1];
+            rot.m[3] += rod_v.m[2], rot.m[5] -= rod_v.m[0];
+            rot.m[6] -= rod_v.m[1], rot.m[7] += rod_v.m[0];
+        }
+        return rot;
+    }
+
+    Matrix matrixToRodrigues(Matrix R)
+    {
+        Matrix r({R[7] - R[5], R[2] - R[6], R[3] - R[1]}); // r = [a32, a13, a21]
+        double s = r.norm()*.5;
+        double c = (R.m[0] + R.m[4] + R.m[8] - 1.) * .5;
+        c = c > 1. ? 1. : c < -1. ? -1. : c;
+        double theta = acos(c);
+
+        if(s < 1e-5)
+        {
+            double t;
+
+            if( c > 0 )
+                zero(r);
+            else
+            {
+                t = (R[0] + 1) * .5;
+                r[0] = std::sqrt(std::max(t, 0.));
+                t = (R[4] + 1) * 0.5;
+                r[1] = std::sqrt(std::max(t, 0.)) * (R[1] < 0 ? -1. : 1.);
+                t = (R[8] + 1) * 0.5;
+                r[2] = std::sqrt(std::max(t, 0.)) * (R[2] < 0 ? -1. : 1.);
+                if( fabs(r[0]) < fabs(r[1]) && fabs(r[0]) < fabs(r[2]) && (R[5] > 0) != (r[1]*r[2] > 0) )
+                    r[2] = -r[2];
+                theta /= r.norm();
+                r *= theta;
+            }
+        }
+        else
+        {
+            double vth = .5/s;
+            vth *= theta;
+            r *= vth;
+        }
+        return r;
     }
 
 #endif

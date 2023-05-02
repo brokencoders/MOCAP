@@ -87,7 +87,7 @@ Algebra::Vector minimizelm(std::function<Algebra::Vector(Algebra::Vector)> f,
             Algebra::Vector x_new = x + h_lm;
             Algebra::Vector fx = f(x);
             Algebra::Vector fx_new = f(x_new);
-            double o = (fx.T() * fx - fx_new.T() * fx_new) / (h_lm.T() * (u * h_lm - g));
+            double o = (double)(fx.T() * fx - fx_new.T() * fx_new) / (h_lm.T() * (u * h_lm - g));
             if (o > 0)
             {
                 x = x_new;
