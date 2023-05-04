@@ -76,7 +76,6 @@ namespace Algebra
         Matrix solve(Matrix b) const;
         Matrix cholesky() const;
         Matrix partialQR(int64_t t = 0, int64_t l = 0, int64_t b = -1, int64_t r = -1) const;
-        void applyHouseholderQ(const Matrix& R);
         std::tuple<Matrix, Matrix> QR() const;
         std::tuple<Matrix, Matrix> tridiagQR() const;
         std::tuple<Matrix, Matrix> implicitelyShiftedQR(const double threshold = 1e-12) const;
@@ -84,8 +83,8 @@ namespace Algebra
 
         Matrix& reshape(size_t row, size_t col);
 
-        double &operator[](size_t i);
-        double operator[](size_t i) const;
+        inline double* operator[](size_t i);
+        inline const double* operator[](size_t i) const;
         double &val(size_t row, size_t col);
         Matrix& vstack(const Matrix& mat);
         Matrix& hstack(const Matrix& mat);
@@ -151,6 +150,7 @@ namespace Algebra
     Matrix identity(size_t r, size_t c);
     Matrix rodriguesToMatrix(Matrix rodrigues_vector);
     Matrix matrixToRodrigues(Matrix rotation_matrix);
+    inline double square(double n);
 
 /* 
     class MatrixView
@@ -657,10 +657,10 @@ namespace Algebra
         for (size_t i = 0; i < min; i++)
         {
             Vector v = R.subMatrix(i,i, -1,i);
-            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            v.m[0] += v.m[0] < 0 ? -v.norm() : v.norm();
             if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
             {
-                v /= v[0];
+                v /= v.m[0];
                 R.householderReflectSubMatForwardLeft(v, i,i, false);
                 b.householderReflectSubMatLeft(v, i,0);
             }
@@ -726,18 +726,14 @@ namespace Algebra
         for (size_t i = 0; i < min; i++)
         {
             Vector v = R.subMatrix(i,i, -1,i);
-            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            v.m[0] += v.m[0] < 0 ? -v.norm() : v.norm();
             if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
             {
-                v /= v[0];
+                v /= v.m[0];
                 R.householderReflectSubMatForwardLeft(v, i,i);
             }
         }
         return R;
-    }
-
-    inline void Matrix::applyHouseholderQ(const Matrix& R)
-    {
     }
 
     std::tuple<Matrix, Matrix> Matrix::QR() const
@@ -749,10 +745,10 @@ namespace Algebra
         for (size_t i = 0; i < min; i++)
         {
             Vector v = R.subMatrix(i,i, -1,i);
-            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            v.m[0] += v.m[0] < 0 ? -v.norm() : v.norm();
             if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
             {
-                v /= v[0];
+                v /= v.m[0];
                 R.householderReflectSubMatForwardLeft(v, i,i);
             }
         }
@@ -812,10 +808,10 @@ namespace Algebra
         for (size_t i = 0; i < col-2; i++)
         {
             Vector v = A.subMatrix(i+1,i, -1,i);
-            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            v.m[0] += v.m[0] < 0 ? -v.norm() : v.norm();
             if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
             {
-                v /= v[0];
+                v /= v.m[0];
                 A.householderReflectSubMatForwardLeft(v, i+1,i);
                 A.householderReflectSubMatForwardRight(v, i,i+1);
             }
@@ -836,45 +832,37 @@ namespace Algebra
             
         while (shift > 0)
         {
-            double Amm = A[shift*col + shift];
-            //for (size_t j = 0; j <= shift; j++)
-            //    A[j*col+j] -= Amm;
-            //
-            //auto [Q,R] = A.subMatrix(0,0,shift,shift).tridiagQR();
-            //A.setSubMatrix(R*Q);
-            //V.setSubMatrix(V.subMatrix(0,0,-1,shift)*Q);
-            //
-            //for (size_t j = 0; j <= shift; j++)
-            //    A[j*col+j] += Amm;
+            double Amm = A[shift][shift];
             
             double x1 = A.m[0] - Amm, x2 = A.m[col];
             double norm = std::hypot(x1,x2);
             double c = x1/norm, s = -x2/norm;
             if (s == 0.) break;
-            A.givensRotateLeft(c, s, 0,1, 0,3);
-            A.givensRotateRight(c, s, 0,1, 0,3);
+            A.givensRotateLeft(c, s, 0,1, 0,std::min(3UL, shift));
+            A.givensRotateRight(c, s, 0,1, 0,std::min(3UL, shift));
             V.givensRotateRight(c, s, 0,1);
 
             for (size_t i = 0; i < shift-1; i++)
             {
-                double x1 = A.m[(i+1)*col + i], x2 = A.m[(i+2)*col + i];
+                double x1 = A[i+1][i], x2 = A[i+2][i];
                 double norm = std::hypot(x1,x2);
                 if (norm == 0.) 
                     break; 
                 double c = x1/norm, s = -x2/norm;
-                A.givensRotateLeft(c, s, i+1,i+2, i,i+3);
-                A.m[(i+2)*col + i] = 0.;
-                A.givensRotateRight(c, s, i+1,i+2, i,i+3);
-                A.m[i*col + i+2] = 0.;
+                A.givensRotateLeft(c, s, i+1,i+2, i,std::min(i+3, shift));
+                A[i+2][i] = 0.;
+                A.givensRotateRight(c, s, i+1,i+2, i,std::min(i+3, shift));
+                A[i][i+2] = 0.;
                 V.givensRotateRight(c, s, i+1,i+2);
             }
-            double error = A[shift*col + shift-1]*A[shift*col + shift-1];
-            //for (size_t j = 0; j < shift; j++)
-            //    error += A[shift*col + j]*A[shift*col + j];
-            //std::cout << "Error " << error << ", it: " << it << '\n';
+            double error = square(A[shift][shift-1]);
             if (error < threshold) shift--;
             it++;
         }
+        //A.print();
+        //for (size_t i = 0; i < col; i++)
+        //    A[i+1][i] = A[i][i+1] = 0.;
+        
         std::cout << it << " iterations\n";
 
         return {V,A};
@@ -890,19 +878,19 @@ namespace Algebra
         for (size_t i = 0; i < col; i++)
         {
             Vector v = B.subMatrix(i,i, -1,i);
-            v[0] += v[0] < 0 ? -v.norm() : v.norm();
+            v.m[0] += v.m[0] < 0 ? -v.norm() : v.norm();
             if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
             {
-                v /= v[0];
+                v /= v.m[0];
                 B.householderReflectSubMatForwardLeft(v, i,i);
             }
             if (i < col - 1)
             {
                 Vector v = B.subMatrix(i,i+1,i);
-                v[0] += v[0] < 0 ? -v.norm() : v.norm();
+                v.m[0] += v.m[0] < 0 ? -v.norm() : v.norm();
                 if (v.m[0] > DBL_EPSILON || v.m[0] < -DBL_EPSILON)
                 {
-                    v /= v[0];
+                    v /= v.m[0];
                     B.householderReflectSubMatForwardRight(v, i,i+1);
                 }
             }
@@ -927,17 +915,53 @@ namespace Algebra
         }
         
         for (size_t i = 1; i < row; i++)
-            std::fill(B.m + i*col, B.m + i*col + i, 0.);
+            std::fill(B[i], B[i] + i, 0.);
         for (size_t i = 0; i < col-1; i++)
-            std::fill(B.m + i*col + i + 2, B.m + (i+1)*col, 0.);
+            std::fill(B[i] + i + 2, B[i+1], 0.);
 
-        while (true)
+        size_t shift = col-1;
+        int it=0;
+
+        while (shift > 0)
         {
-            for (size_t i = 0; i < col; i++)
-                if (abs(B.m[i*col + i+1]) < eps*(abs(B.m[i*col+i]) + abs(B.m[(i+1)*col+i+1])))
-                    B.m[i*col + i+1] = 0.;
+            double mu = square(B[shift][shift]) + square(B[shift-1][shift]);
             
-                        
+            double x1 = square(B.m[0]) - mu, x2 = B.m[0] * B.m[1];
+            double norm = std::hypot(x1,x2);
+            double c = x1/norm, s = -x2/norm;
+            if (s == 0.) break;
+            B.givensRotateRight(c, s, 0,1, 0,std::min(3UL, shift));
+            Vt.givensRotateLeft(c, s, 0,1);
+
+            for (size_t i = 0; i < shift; i++)
+            {
+                double x1 = B[i][i], x2 = B[i+1][i];
+                double norm = std::hypot(x1,x2);
+                if (norm == 0.) 
+                    break; 
+                double c = x1/norm, s = -x2/norm;
+                B.givensRotateLeft(c, s, i,i+1, i+1,std::min(i+3, shift));
+                B[i][i] = norm;
+                B[i+1][i] = 0.;
+                U.givensRotateRight(c, s, i,i+1);
+
+                if (i < shift-1)
+                {
+                    x1 = B[i][i+1], x2 = B[i][i+2];
+                    norm = std::hypot(x1,x2);
+                    if (norm == 0.) 
+                        break; 
+                    c = x1/norm, s = -x2/norm;
+                    B.givensRotateRight(c, s, i+1,i+2, i+1,std::min(i+3, shift));
+                    B[i][i+1] = norm;
+                    B[i][i+2] = 0.;
+                    Vt.givensRotateLeft(c, s, i+1,i+2);
+                }
+                //B.print();
+            }
+            double error = square(B[shift-1][shift]);
+            if (error < 1e-20) shift--;
+            it++;
         }
 
         return {U, B, Vt};
@@ -951,14 +975,14 @@ namespace Algebra
         return *this;
     }
 
-    double &Matrix::operator[](size_t i)
+    inline double* Matrix::operator[](size_t i)
     {
-        return m[i];
+        return m + i*col;
     }
 
-    double Matrix::operator[](size_t i) const
+    inline const double* Matrix::operator[](size_t i) const
     {
-        return m[i];
+        return m + i*col;
     }
 
     double &Matrix::val(size_t row, size_t col)
@@ -1090,7 +1114,7 @@ namespace Algebra
 
         size_t end = std::min(v.getSize(), row);
         for (size_t i = 0; i < end; i++)
-            m[c + i * row] = v[i];
+            m[c + i * row] = v.m[i];
     }
 
     void Matrix::setRow(int64_t r, const std::initializer_list<double> &lst)
@@ -1498,7 +1522,7 @@ namespace Algebra
 
     Matrix matrixToRodrigues(Matrix R)
     {
-        Matrix r({R[7] - R[5], R[2] - R[6], R[3] - R[1]}); // r = [a32, a13, a21]
+        Matrix r({R.m[7] - R.m[5], R.m[2] - R.m[6], R.m[3] - R.m[1]}); // r = [a32, a13, a21]
         double s = r.norm()*.5;
         double c = (R.m[0] + R.m[4] + R.m[8] - 1.) * .5;
         c = c > 1. ? 1. : c < -1. ? -1. : c;
@@ -1512,14 +1536,14 @@ namespace Algebra
                 zero(r);
             else
             {
-                t = (R[0] + 1) * .5;
-                r[0] = std::sqrt(std::max(t, 0.));
-                t = (R[4] + 1) * 0.5;
-                r[1] = std::sqrt(std::max(t, 0.)) * (R[1] < 0 ? -1. : 1.);
-                t = (R[8] + 1) * 0.5;
-                r[2] = std::sqrt(std::max(t, 0.)) * (R[2] < 0 ? -1. : 1.);
-                if( fabs(r[0]) < fabs(r[1]) && fabs(r[0]) < fabs(r[2]) && (R[5] > 0) != (r[1]*r[2] > 0) )
-                    r[2] = -r[2];
+                t = (R.m[0] + 1) * .5;
+                r.m[0] = std::sqrt(std::max(t, 0.));
+                t = (R.m[4] + 1) * 0.5;
+                r.m[1] = std::sqrt(std::max(t, 0.)) * (R.m[1] < 0 ? -1. : 1.);
+                t = (R.m[8] + 1) * 0.5;
+                r.m[2] = std::sqrt(std::max(t, 0.)) * (R.m[2] < 0 ? -1. : 1.);
+                if( fabs(r.m[0]) < fabs(r.m[1]) && fabs(r.m[0]) < fabs(r.m[2]) && (R.m[5] > 0) != (r.m[1]*r.m[2] > 0) )
+                    r.m[2] = -r.m[2];
                 theta /= r.norm();
                 r *= theta;
             }
@@ -1531,6 +1555,11 @@ namespace Algebra
             r *= vth;
         }
         return r;
+    }
+
+    inline double square(double n)
+    {
+        return n*n;
     }
 
 #endif

@@ -17,8 +17,8 @@ inline std::vector<Algebra::Vector> generateCheckerboardCoords(int layout_x, int
     {
         x = (x + 1) % layout_x;
         if (x == 0) y++;
-        pt[0] = x * size;
-        pt[1] = y * size;
+        pt[0][0] = x * size;
+        pt[0][1] = y * size;
     }
     return checkerboard;
 }
@@ -44,13 +44,13 @@ inline std::tuple<Algebra::Matrix, Algebra::Matrix> normalize2Dset(std::vector<A
         x = (x - x_bar) * s;
 
     return {{ 3, 3, {
-             s, 0, -s * x_bar[0], 
-             0, s, -s * x_bar[1], 
+             s, 0, -s * x_bar[0][0], 
+             0, s, -s * x_bar[0][1], 
              0, 0, 1
             }},
             { 3, 3, {
-             1/s,   0, x_bar[0], 
-             0,   1/s, x_bar[1], 
+             1/s,   0, x_bar[0][0], 
+             0,   1/s, x_bar[0][1], 
              0,     0,        1
             }}};
 
