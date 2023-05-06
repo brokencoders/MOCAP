@@ -12,6 +12,7 @@
 #include <tuple>
 #include <algorithm>
 #include <cfloat>
+#include <vector>
 
 namespace Algebra
 {
@@ -83,10 +84,15 @@ namespace Algebra
 
         Matrix& reshape(size_t row, size_t col);
 
+        inline double& operator()(size_t i);
+        inline double  operator()(size_t i) const;
+        inline double& operator()(size_t i, size_t j);
+        inline double  operator()(size_t i, size_t j) const;
         inline double* operator[](size_t i);
         inline const double* operator[](size_t i) const;
         double &val(size_t row, size_t col);
         Matrix& vstack(const Matrix& mat);
+        Matrix& vstack(const std::vector<Matrix>& mats);
         Matrix& hstack(const Matrix& mat);
 
         void setCol(int64_t c, const std::initializer_list<double> &lst);
@@ -121,7 +127,12 @@ namespace Algebra
         size_t row, col, size;
 
         static const size_t buff_size = 16;
-        double buff[buff_size];
+    public:
+        union {
+            struct { double x,y,z,w; };
+            struct { double r,g,b,a; };
+            double buff[buff_size];
+        };
 
     public:
         size_t rows() const { return row; }
@@ -131,6 +142,7 @@ namespace Algebra
         friend void zero(Matrix&);
         friend Matrix  identity(size_t);
         friend Matrix  identity(size_t, size_t);
+        friend Matrix  std_base_vector(size_t, size_t);
         friend Matrix  rodriguesToMatrix(Matrix);
         friend Matrix  matrixToRodrigues(Matrix);
         friend Matrix  operator+(double, const Matrix&);
@@ -142,15 +154,20 @@ namespace Algebra
         friend double  operator/(double, const Matrix&);
         friend Matrix  vstack(const std::vector<Matrix>& mats);
         friend Matrix  hstack(const std::vector<Matrix>& mats);
+        friend Matrix  cross(const Matrix& v1, const Matrix& v2);
+        friend int     upperTriangInvert(Matrix& m);
     };
 
     using Vector = Matrix;
     void zero(Matrix& mat);
     Matrix identity(size_t size);
     Matrix identity(size_t r, size_t c);
+    Vector std_base_vector(size_t dim, size_t n = 0);
     Matrix rodriguesToMatrix(Matrix rodrigues_vector);
     Matrix matrixToRodrigues(Matrix rotation_matrix);
+    Matrix cross(const Matrix& v1, const Matrix& v2);
     inline double square(double n);
+    int upperTriangInvert(Matrix& m);
 
 /* 
     class MatrixView
@@ -685,25 +702,25 @@ namespace Algebra
         {
             size_t j;
             for (j = 0; j < i; j++)
-                L.m[i*col + j] = 0;
+                L[i][j] = 0;
             for (; j < col; j++)
-                L.m[i*col + j] = m[i*col + j];
+                L[i][j] = (*this)[i][j];
         }
 
         for (size_t i = 0; i < L.col; i++)
         {
-            double& a11 = L.m[i*col + i];
+            double& a11 = L[i][i];
             a11 = sqrt(a11);
             if (std::isnan(a11))
                 throw std::invalid_argument("Matrix not positive defined in Matrix::cholesky()");
 
             double a11_i = 1./a11;
             for (size_t j = i+1; j < row; j++)
-                L.m[j + i*col] *= a11_i;
+                L[i][j] *= a11_i;
 
             for (size_t j = i+1; j < row; j++)
                 for (size_t k = j; k < col; k++)
-                    L.m[j*col + k] -= L.m[j + i*col] * L.m[k + i*col];
+                    L[j][k] -= L[i][j] * L[i][k];
         }
 
         return L.T();
@@ -802,7 +819,7 @@ namespace Algebra
 
         Matrix V = identity(row);
         Matrix A = *this;
-        size_t shift = col-1;
+        size_t bshift = col-1, tshift = 0;
         int it=0;
         
         for (size_t i = 0; i < col-2; i++)
@@ -830,33 +847,36 @@ namespace Algebra
         for (size_t i = 2; i < row; i++)
             std::fill(A.m + i*col, A.m + i*col + i-1, 0.);
             
-        while (shift > 0)
+        while (bshift > tshift)
         {
-            double Amm = A[shift][shift];
+            double Amm = A[bshift][bshift];
             
-            double x1 = A.m[0] - Amm, x2 = A.m[col];
+            double x1 = A[tshift][tshift] - Amm, x2 = A[tshift][tshift+1];
             double norm = std::hypot(x1,x2);
             double c = x1/norm, s = -x2/norm;
-            if (s == 0.) break;
-            A.givensRotateLeft(c, s, 0,1, 0,std::min(3UL, shift));
-            A.givensRotateRight(c, s, 0,1, 0,std::min(3UL, shift));
-            V.givensRotateRight(c, s, 0,1);
-
-            for (size_t i = 0; i < shift-1; i++)
+            if (s == 0.) tshift++;
+            else
             {
-                double x1 = A[i+1][i], x2 = A[i+2][i];
-                double norm = std::hypot(x1,x2);
-                if (norm == 0.) 
-                    break; 
-                double c = x1/norm, s = -x2/norm;
-                A.givensRotateLeft(c, s, i+1,i+2, i,std::min(i+3, shift));
-                A[i+2][i] = 0.;
-                A.givensRotateRight(c, s, i+1,i+2, i,std::min(i+3, shift));
-                A[i][i+2] = 0.;
-                V.givensRotateRight(c, s, i+1,i+2);
+                A.givensRotateLeft(c, s, tshift,tshift+1, tshift,std::min(tshift+3UL, bshift));
+                A.givensRotateRight(c, s, tshift,tshift+1, tshift,std::min(tshift+3UL, bshift));
+                V.givensRotateRight(c, s, tshift,tshift+1);
+
+                for (size_t i = tshift; i < bshift-1; i++)
+                {
+                    double x1 = A[i+1][i], x2 = A[i+2][i];
+                    double norm = std::hypot(x1,x2);
+                    if (norm == 0.) 
+                        break; 
+                    double c = x1/norm, s = -x2/norm;
+                    A.givensRotateLeft(c, s, i+1,i+2, i,std::min(i+3, bshift));
+                    A[i+2][i] = 0.;
+                    A.givensRotateRight(c, s, i+1,i+2, i,std::min(i+3, bshift));
+                    A[i][i+2] = 0.;
+                    V.givensRotateRight(c, s, i+1,i+2);
+                }
+                double error = square(A[bshift][bshift-1]);
+                if (error < threshold) bshift--;
             }
-            double error = square(A[shift][shift-1]);
-            if (error < threshold) shift--;
             it++;
         }
         //A.print();
@@ -870,8 +890,9 @@ namespace Algebra
 
     std::tuple<Matrix, Matrix, Matrix> Matrix::svd() const
     {
-        Matrix B = *this;
-        Matrix U = identity(row, col);
+        double scale = this->absMax();
+        Matrix B = (*this) / scale;
+        Matrix U = identity(col, row);
         Matrix Vt = identity(col);
         const double eps = 1e-6;
 
@@ -901,7 +922,7 @@ namespace Algebra
             if (u.m[0] > DBL_EPSILON || u.m[0] < -DBL_EPSILON)
             {
                 u.m[0] = 1.;
-                U.householderReflectSubMatLeft(u, i,i);
+                U.householderReflectSubMatRight(u, i,i);
             }
             if (i < col - 1)
             {
@@ -914,57 +935,98 @@ namespace Algebra
             }
         }
         
-        for (size_t i = 1; i < row; i++)
+        for (size_t i = 1; i < col; i++)
             std::fill(B[i], B[i] + i, 0.);
         for (size_t i = 0; i < col-1; i++)
             std::fill(B[i] + i + 2, B[i+1], 0.);
 
-        size_t shift = col-1;
+        size_t bshift = col-1, tshift = 0;
         int it=0;
-
-        while (shift > 0)
+        Matrix S = B.subMatrix(0,0, bshift,bshift);
+        
+        if (S[bshift][bshift] < 0.)
         {
-            double mu = square(B[shift][shift]) + square(B[shift-1][shift]);
-            
-            double x1 = square(B.m[0]) - mu, x2 = B.m[0] * B.m[1];
-            double norm = std::hypot(x1,x2);
-            double c = x1/norm, s = -x2/norm;
-            if (s == 0.) break;
-            B.givensRotateRight(c, s, 0,1, 0,std::min(3UL, shift));
-            Vt.givensRotateLeft(c, s, 0,1);
-
-            for (size_t i = 0; i < shift; i++)
-            {
-                double x1 = B[i][i], x2 = B[i+1][i];
-                double norm = std::hypot(x1,x2);
-                if (norm == 0.) 
-                    break; 
-                double c = x1/norm, s = -x2/norm;
-                B.givensRotateLeft(c, s, i,i+1, i+1,std::min(i+3, shift));
-                B[i][i] = norm;
-                B[i+1][i] = 0.;
-                U.givensRotateRight(c, s, i,i+1);
-
-                if (i < shift-1)
-                {
-                    x1 = B[i][i+1], x2 = B[i][i+2];
-                    norm = std::hypot(x1,x2);
-                    if (norm == 0.) 
-                        break; 
-                    c = x1/norm, s = -x2/norm;
-                    B.givensRotateRight(c, s, i+1,i+2, i+1,std::min(i+3, shift));
-                    B[i][i+1] = norm;
-                    B[i][i+2] = 0.;
-                    Vt.givensRotateLeft(c, s, i+1,i+2);
-                }
-                //B.print();
-            }
-            double error = square(B[shift-1][shift]);
-            if (error < 1e-20) shift--;
-            it++;
+            S[bshift][bshift] *= -1.;
+            S[bshift-1][bshift] *= -1.;
+            auto row = Vt[bshift];
+            for (size_t i = 0; i < Vt.col; i++)
+                row[i] = -row[i];
         }
 
-        return {U, B, Vt};
+        while (bshift > tshift)
+        {
+            double mu = square(S[bshift][bshift]) + square(S[bshift-1][bshift]);
+            
+            double x1 = square(S[tshift][tshift]) - mu, x2 = S[tshift][tshift] * S[tshift][tshift+1];
+            double norm = std::hypot(x1,x2);
+            double c = x1/norm, s = -x2/norm;
+            if (s == 0.) 
+                tshift++;
+            else
+            {
+                S.givensRotateRight(c, s, tshift,tshift+1, tshift,std::min(tshift + 3UL, bshift));
+                Vt.givensRotateLeft(c, s, tshift,tshift+1);
+
+                for (size_t i = tshift; i < bshift; i++)
+                {
+                    double x1 = S[i][i], x2 = S[i+1][i];
+                    double norm = std::hypot(x1,x2);
+                    if (norm == 0.) 
+                        break; 
+                    double c = x1/norm, s = -x2/norm;
+                    S.givensRotateLeft(c, s, i,i+1, i+1,std::min(i+3, bshift));
+                    S[i][i] = norm;
+                    S[i+1][i] = 0.;
+                    U.givensRotateLeft(c, s, i,i+1);
+
+                    if (i < bshift-1)
+                    {
+                        x1 = S[i][i+1], x2 = S[i][i+2];
+                        norm = std::hypot(x1,x2);
+                        if (norm == 0.) 
+                            break; 
+                        c = x1/norm, s = -x2/norm;
+                        S.givensRotateRight(c, s, i+1,i+2, i+1,std::min(i+3, bshift));
+                        S[i][i+1] = norm;
+                        S[i][i+2] = 0.;
+                        Vt.givensRotateLeft(c, s, i+1,i+2);
+                    }
+                    //S.print();
+                }
+                double error = std::abs(S[bshift-1][bshift]);
+                if (error < 1e-30) {bshift--; /* std::cout << "Shift down " << error << '\n'; */ }
+            }
+            it++;
+        }
+        if (S[S.col-1][S.col-1] < 0.)
+        {
+            S[S.col-1][S.col-1] *= -1.;
+            auto row = Vt[Vt.row-1];
+            for (size_t i = 0; i < Vt.col; i++)
+                row[i] = -row[i];
+        }
+
+        for (size_t i = 0; i < S.col-1; i++)
+        {
+            S[i][i] *= scale;
+            S[i][i+1] = 0.;
+        }
+        S.m[S.size-1] *= scale;
+        
+        std::vector<std::pair<double, int64_t>> svals;
+        svals.reserve(S.col);
+        for (int64_t i = 0; i < S.col; i++)
+            svals.emplace_back(std::abs(S[i][i]), i);
+
+        std::sort(svals.begin(), svals.end(), std::greater<>());
+
+        Matrix p(S.col, S.col);
+        zero(p);
+        for (size_t i = 0; i < S.col; i++)
+            p[i][svals[i].second] = 1.;
+
+        return {(p*U).T(), p*S*p.T(), p*Vt};
+        //return {U.T(), S, Vt};
     }
 
     Matrix& Matrix::reshape(size_t row, size_t col)
@@ -973,6 +1035,26 @@ namespace Algebra
             throw std::length_error("Matrix wrong reshape size");
         this->row = row, this->col = col;
         return *this;
+    }
+
+    inline double& Matrix::operator()(size_t i)
+    {
+        return m[i];
+    }
+
+    inline double Matrix::operator()(size_t i) const
+    {
+        return m[i];
+    }
+
+    inline double &Matrix::operator()(size_t i, size_t j)
+    {
+        return m[i*col + j];
+    }
+
+    inline double Matrix::operator()(size_t i, size_t j) const
+    {
+        return m[i*col + j];
     }
 
     inline double* Matrix::operator[](size_t i)
@@ -1017,6 +1099,41 @@ namespace Algebra
         return *this;
     }
 
+    inline Matrix &Matrix::vstack(const std::vector<Matrix> &mats)
+    {
+        size_t new_row = 0;
+        for (auto& mat : mats)
+        {
+            if (mat.col != col)
+                throw std::length_error("Matrix columns not matching for vertical stacking");
+            new_row += mat.row;
+        }
+
+        double* new_buf;
+
+        if (col * (row + new_row) < buff_size)
+            new_buf = buff;
+        else
+            new_buf = new double[col * (row + new_row)];
+        
+        if (new_buf != m)
+            std::copy(m, m + size, new_buf);
+
+        double* tmp_buff = new_buf + size;
+        for (auto& mat : mats)
+        {
+            std::copy(mat.m, mat.m + mat.size, tmp_buff);
+            tmp_buff += mat.size;
+        }
+
+        if (m != buff && m != new_buf) std::free(m);
+        m = new_buf;
+        row += new_row;
+        size = row*col;
+
+        return *this;
+    }
+
     Matrix vstack(const std::vector<Matrix>& mats)
     {
         size_t col = mats.empty() ? 0 : mats[0].col;
@@ -1041,7 +1158,7 @@ namespace Algebra
 
     Matrix& Matrix::hstack(const Matrix &mat)
     {
-        if (mat.col != col)
+        if (mat.row != row)
             throw std::length_error("Matrix rows not matching for horizontal stacking");
 
         double* new_buf;
@@ -1440,10 +1557,10 @@ namespace Algebra
     {
         if (r1 < 0) r1 += row;
         if (r2 < 0) r2 += row;
-        if (l < 0) l += row;
-        if (r < 0) r += row;
-        l = std::clamp<int64_t>(l, 0L, row-1);
-        r = std::clamp<int64_t>(r, 0L, row-1);
+        if (l < 0) l += col;
+        if (r < 0) r += col;
+        l = std::clamp<int64_t>(l, 0L, col-1);
+        r = std::clamp<int64_t>(r, 0L, col-1);
         if (r1 >= row || r1 < 0 || r2 >= row || r2 < 0)
             throw std::out_of_range("Matrix row indices out of range in Matrix::givensRotateLeft()");
 
@@ -1461,8 +1578,8 @@ namespace Algebra
         if (c2 < 0) c2 += col;
         if (t < 0) t += row;
         if (b < 0) b += row;
-        t = std::clamp<int64_t>(t, 0L, col-1);
-        b = std::clamp<int64_t>(b, 0L, col-1);
+        t = std::clamp<int64_t>(t, 0L, row-1);
+        b = std::clamp<int64_t>(b, 0L, row-1);
         if (c1 >= col || c1 < 0 || c2 >= col || c2 < 0)
             throw std::out_of_range("Matrix column indices out of range in Matrix::givensRotateRight()");
 
@@ -1496,6 +1613,15 @@ namespace Algebra
         for (size_t i = 0; i < min; i++)
             I.m[i * c + i] = 1.0;
         return I;
+    }
+
+    Vector std_base_vector(size_t dim, size_t n)
+    {
+        if (n >= dim) n = dim-1;
+        Vector base_v(dim);
+        zero(base_v);
+        base_v.m[n] = 1.;
+        return base_v;
     }
 
     Matrix rodriguesToMatrix(Matrix rod_v)
@@ -1557,9 +1683,46 @@ namespace Algebra
         return r;
     }
 
+    Matrix cross(const Matrix &v1, const Matrix &v2)
+    {
+        Matrix c(3);
+        c.m[0] = v1.m[1] * v2.m[2] - v1.m[2] * v2.m[1];
+        c.m[1] = v1.m[2] * v2.m[0] - v1.m[0] * v2.m[2];
+        c.m[2] = v1.m[0] * v2.m[1] - v1.m[1] * v2.m[0];
+        return c;
+    }
+
     inline double square(double n)
     {
         return n*n;
+    }
+
+    int upperTriangInvert(Matrix &mat)
+    {
+        if (mat.col != mat.row)
+            throw std::invalid_argument("Invalid non-triangular Matrix given in upperTriangInvert(Matrix)");
+        int i, j, k, n = mat.col;
+        double *p_i, *p_j, *p_k;
+        double sum;
+
+        // diagonal
+        for (k = 0, p_k = mat.m; k < n; p_k += (n + 1), k++) {
+            if (*p_k == 0.0) return -1;
+            else *p_k = 1.0 / *p_k;
+        }
+
+        // upper part
+        for (i = n - 2, p_i = mat.m + n * (n - 2); i >=0; p_i -= n, i-- ) {
+            for (j = n - 1; j > i; j--) {
+                sum = 0.0;
+                for (k = i + 1, p_k = p_i + n; k <= j; p_k += n, k++ ) {
+                    sum += *(p_i + k) * *(p_k + j);
+                }
+                *(p_i + j) = - *(p_i + i) * sum;
+            }
+        }
+        
+        return 0;
     }
 
 #endif
