@@ -6,14 +6,16 @@
 #define ALGEBRA_SHORT_NAMES
 #include "algbera.h"
 #include "calibration.h"
+#include "camera.h"
 
 using namespace Algebra;
 using namespace std::placeholders;
 
 
-double size = 1, sensor_pixel_size = 1.12e-6;
-int layout_x = 7, layout_y = 5;
-std::vector<std::vector<Vec>> points = {
+static double size = 1, sensor_pixel_size = 1.12e-6;
+static int width = 5312, height = 2988;
+static int layout_x = 7, layout_y = 5;
+static std::vector<std::vector<Vec>> points = {
     {Vec({1447.6632,652.4185}),  Vec({1855.779,653.6937}),   Vec({2260.2432,653.9705}),  Vec({2661.6667,651.54346}), Vec({3064.6223,646.02716}), Vec({3471.6267,639.5849}),  Vec({3881.254,632.47833}),  Vec({1464.3779,1062.6641}), Vec({1868.8302,1063.05}), Vec({2267.5527,1061.9054}), Vec({2663.9385,1059.0275}), Vec({3060.6692,1055.5146}), Vec({3463.0896,1049.4722}), Vec({3869.5818,1043.6792}), Vec({1479.5461,1462.8992}), Vec({1879.4222,1460.6489}), Vec({2273.8083,1458.2185}), Vec({2666.064,1455.7513}), Vec({3058.276,1452.1133}), Vec({3456.0764,1449.0414}), Vec({3859.107,1445.2458}), Vec({1490.8859,1855.3342}), Vec({1888.0289,1850.9668}), Vec({2279.3936,1847.3595}), Vec({2668.0698,1844.0776}), Vec({3057.708,1842.0598}), Vec({3452.0283,1840.2754}), Vec({3851.1074,1839.253}), Vec({1500.0402,2243.298}), Vec({1894.5195,2236.4607}), Vec({2283.9185,2231.2527}), Vec({2670.608,2227.747}), Vec({3058.3245,2226.5789}), Vec({3449.8108,2226.9683}), Vec({3845.4277,2227.5166})},
     {Vec({517.5,935.0}),         Vec({952.3259,960.80835}),  Vec({1353.4779,988.25745}), Vec({1720.868,1013.289}),   Vec({2056.7158,1036.1849}), Vec({2364.4983,1056.2407}), Vec({2649.7966,1073.4001}), Vec({519.0,1339.0}), Vec({951.9582,1345.7369}), Vec({1353.3053,1357.2115}), Vec({1719.8691,1365.8746}), Vec({2053.3228,1373.4413}), Vec({2359.5503,1379.8296}), Vec({2642.948,1385.9207}), Vec({520.8562,1736.2976}), Vec({953.15674,1729.3018}), Vec({1351.6271,1721.7445}), Vec({1716.6978,1713.2767}), Vec({2048.6711,1706.4999}), Vec({2353.8354,1700.0667}), Vec({2636.5544,1694.7336}), Vec({522.5,2134.5}), Vec({950.0,2109.5}), Vec({1347.4999,2083.166}), Vec({1711.517,2059.093}), Vec({2043.4258,2037.552}), Vec({2347.6533,2018.3014}), Vec({2629.5972,2001.8385}), Vec({525.50006,2525.9368}), Vec({949.1145,2486.271}), Vec({1343.0144,2444.0735}), Vec({1705.2065,2404.4453}), Vec({2036.6317,2368.421}), Vec({2341.5706,2336.5312}), Vec({2623.3325,2308.1328})},
     {Vec({2148.0916,879.2464}),  Vec({2476.483,860.26807}),  Vec({2824.0078,837.79663}), Vec({3196.0,813.0}),        Vec({3594.5,784.5}),        Vec({4023.0,754.0}),        Vec({4480.0,724.0}),        Vec({2162.8083,1234.5663}), Vec({2488.2415,1224.3367}), Vec({2831.8015,1213.9867}), Vec({3199.5833,1201.5311}), Vec({3592.002,1188.2374}), Vec({4020.0,1171.5}), Vec({4472.9927,1157.5973}), Vec({2176.5352,1580.5315}), Vec({2499.8037,1580.784}), Vec({2841.0986,1580.2937}), Vec({3204.5566,1580.6044}), Vec({3594.8335,1580.3271}), Vec({4018.4553,1580.2104}), Vec({4469.4556,1580.5819}), Vec({2189.24,1923.2104}), Vec({2510.081,1931.8861}), Vec({2850.3513,1942.4669}), Vec({3211.447,1953.6062}), Vec({3600.046,1968.098}), Vec({4019.588,1982.677}), Vec({4466.475,1998.2012}), Vec({2200.541,2263.3433}), Vec({2520.7988,2281.3823}), Vec({2859.5999,2301.3213}), Vec({3220.7454,2325.2927}), Vec({3607.4387,2351.7654}), Vec({4023.3381,2380.8245}), Vec({4463.568,2407.9307})},
@@ -26,130 +28,15 @@ std::vector<std::vector<Vec>> points = {
     {Vec({672.24866,672.0428}),  Vec({1076.0,710.5}),        Vec({1439.5818,747.56494}), Vec({1760.6849,781.92096}), Vec({2051.974,811.8042}),   Vec({2312.012,837.9621}),   Vec({2549.3179,860.83514}), Vec({679.5,1068.5}), Vec({1081.0,1086.5}), Vec({1441.0,1101.0}), Vec({1763.8546,1116.6719}), Vec({2050.6497,1129.126}), Vec({2309.1606,1140.0269}), Vec({2543.7642,1149.1569}), Vec({686.2511,1461.2339}), Vec({1085.5137,1454.9293}), Vec({1445.3401,1450.0736}), Vec({1763.9265,1444.2859}), Vec({2048.3647,1440.4735}), Vec({2304.5273,1436.5563}), Vec({2538.5056,1432.5309}), Vec({693.0,1847.5}), Vec({1088.4738,1818.8412}), Vec({1444.11,1792.41}), Vec({1761.4308,1768.6797}), Vec({2045.4962,1747.5656}), Vec({2300.4795,1729.0266}), Vec({2532.9514,1713.0629}), Vec({697.5,2229.0}), Vec({1090.1661,2177.7227}), Vec({1443.4012,2132.515}), Vec({1758.7885,2089.4075}), Vec({2040.8118,2052.4807}), Vec({2295.687,2020.0275}), Vec({2527.5232,1990.4308})},
     {Vec({2521.061,757.37744}),  Vec({2882.1216,770.4984}),  Vec({3232.0564,779.9663}),  Vec({3570.3523,789.40875}), Vec({3899.498,796.94446}),  Vec({4215.631,807.2652}),   Vec({4514.6777,817.84326}), Vec({2519.1873,1139.6821}), Vec({2877.9827,1143.0249}), Vec({3223.5386,1147.4141}), Vec({3560.1677,1149.0765}), Vec({3885.1257,1151.7323}), Vec({4201.7007,1154.8739}), Vec({4502.5664,1156.8029}), Vec({2517.961,1511.4163}), Vec({2873.5142,1509.5099}), Vec({3217.267,1505.1577}), Vec({3550.587,1503.3713}), Vec({3875.2764,1499.943}), Vec({4189.843,1497.1439}), Vec({4489.731,1495.829}), Vec({2517.4944,1881.1243}), Vec({2870.6897,1869.058}), Vec({3212.4607,1860.6355}), Vec({3544.3975,1851.8429}), Vec({3867.4033,1843.5945}), Vec({4178.4824,1836.1581}), Vec({4478.233,1828.4125}), Vec({2515.9185,2244.216}), Vec({2868.634,2227.8796}), Vec({3209.1006,2210.632}), Vec({3539.4995,2198.5515}), Vec({3859.639,2184.3623}), Vec({4169.738,2170.7007}), Vec({4466.3027,2156.2847})}
 };
-
+        }
+    }
+}
+ */
 int main()
 {
-    std::vector<Vec> world_points = generateCheckerboardCoords(layout_x, layout_y, size);
-    auto [Nx, Nx_i] = normalize2Dset(world_points);
-
-    /* Homographies estimation */
-
-    std::vector<Mat> H;
-    H.reserve(world_points.size());
-
-    for (auto& imgpt : points)
-    {
-        auto [Nu, Nu_i] = normalize2Dset(imgpt);
-
-        int n_pt = layout_x * layout_y;
-        Mat M(2 * n_pt, 9);
-
-        for (int i = 0; i < imgpt.size(); i++)
-        {
-            double Xi = world_points[i](0);
-            double Yi = world_points[i](1);
-            double ui = imgpt[i](0);
-            double vi = imgpt[i](1);
-
-            M.setRow(i * 2,     { -Xi, -Yi, -1, 0, 0, 0, ui * Xi, ui * Yi, ui});
-            M.setRow(i * 2 + 1, { 0, 0, 0, -Xi, -Yi, -1, vi * Xi, vi * Yi, vi});
-        }
-
-        auto[U, S, Vt] = M.svd();
-        Vec h = Vt.getRow(-1).reshape(9,1);
-
-        Vec data = vstack(imgpt);
-        h = minimizelm(std::bind(multiPointProjectionError, world_points, _1, data), h, 
-                       std::bind(multiPointProjectionErrorJacobian, world_points, _1)); 
-
-        h.reshape(3, 3);
-        H.push_back(Nu_i * h * Nx);
-
-        unnormalizeSet(imgpt, Nu_i);
-    }
-
-    unnormalizeSet(world_points, Nx_i);
-
-    /* Intrinsics estimation */
-
-    Vec V(0,6);
-    for (auto& h : H)
-        V.vstack({vpq(0,1, h), vpq(0,0, h) - vpq(1,1, h)});
-
-    auto[U, S, Vt] = V.svd();
-    Vec b = Vt.getRow(-1);
-    b.transpose();
-    Mat B = {3,3, {
-        b(0),b(1),b(3), b(1),b(2),b(4), b(3),b(4),b(5)
-    }};
-    
-    /* Find A from H, and intrinsic parameters */
-
-    if (b(0) < 0 || b(2) < 0 || b(5) < 0)
-        B *= -1.;
-    
-    Matrix A_i = B.cholesky().T();
-    A_i /= A_i[2][2];
-    Matrix A = A_i;
-    upperTriangInvert(A);
-
-    /* Alternative way for extracting parameters */
-
-    double w = b(0)*b(2)*b(5) - pow(b(1), 2)*b(5) - b(0)*pow(b(4), 2) + 2*b(1)*b(3)*b(4) - b(2)*pow(b(3), 2);
-    double d = b(0)*b(2) - pow(b(1), 2);
-
-    double alpha = sqrt(w / (d * b(0)));
-    double beta  = sqrt(w / (d*d) * b(0));
-    double gamma = sqrt(w / (d*d  * b(0))) * b(1);
-    double u_c   = (b(1)*b(4) - b(2)*b(3)) / d;
-    double v_c   = (b(1)*b(3) - b(0)*b(4)) / d;
-    Vec prjcen({u_c, v_c});
-
-    /* Extrinsics estimation */
-
-    std::vector<Mat> Rt;
-    Rt.reserve(H.size());
-    for (auto& h : H)
-    {
-        double lam = 1. / (A_i * h.getCol(0)).norm();
-        Mat r0r1t = (lam * A_i * h);
-        Vec r2 = cross(r0r1t.getCol(0), r0r1t.getCol(1));
-        Rt.emplace_back(hstack({r0r1t.subMatrix(0,0,-1,1), r2, r0r1t.getCol(2)}));
-    }
-
-    /* Distortion parameters guess */
-
-    Mat D_mat(0,3), d_dot(0,1);
-    for (size_t i = 0; i < points.size(); i++)
-        for (size_t j = 0; j < points[i].size(); j++)
-        {
-            Vec prjpt = (H[i] * world_points[j].hom()).hom_i();
-            double r = prjpt.norm();
-            Vec rv = {1,3, {pow(r,2), pow(r,4), pow(r,6)}};
-            d_dot.vstack(points[i][j] - prjpt);
-            D_mat.vstack((points[i][j] - prjpt) * rv);
-        }
-    
-    Vec k = D_mat.solve(d_dot);
-    Vec p({0,0});
-
-    /* Minimize reprojection error */
-
-    Vec a({alpha,beta,gamma,u_c,v_c,k(0),k(1),k(2),p(0),p(1)});
-    std::vector<Vec> W;
-    W.reserve(Rt.size());
-    for (auto& rt : Rt)
-        W.emplace_back(matrixToRodrigues(rt.subMatrix(0,0,2,2)).vstack(rt.getCol(3)));
-
-    Vec P = a;
-    P.vstack(W);
-    Vec obs_obj_pt(points.size()*points[0].size()*2);
-    for (size_t i = 0; i < points.size(); i++)
-        obs_obj_pt.setSubMatrix(vstack(points[i]), i*points[0].size()*2);
-
-    Vec P_opt = minimizelm(std::bind(multiPointProjectionWDistError, world_points, obs_obj_pt, _1), P, 
-                           std::bind(multiPointProjectionWDistErrorJacobian, world_points, _1));
-
-    multiPointProjectionWDistError(world_points, obs_obj_pt, P_opt).print();
-    //(P_opt-P).print();
+    Timer t("calibration");
+    MoCap::Camera cam(width, height, sensor_pixel_size);
+    double avgReprojErr = cam.calibrateIntrinsics(layout_x, layout_y, size, points);
+    std::cout << "Average Reprojection Error: " << avgReprojErr << '\n';
+    cam.print();
 }
