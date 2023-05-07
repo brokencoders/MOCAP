@@ -63,6 +63,7 @@ namespace Algebra
         explicit operator double() const;
 
         double norm() const;
+        double pnorm(size_t p) const;
         double normSquare() const;
         Matrix trace() const;
 
@@ -571,6 +572,14 @@ namespace Algebra
     double Matrix::norm() const
     {
         return sqrt(normSquare());
+    }
+
+    inline double Matrix::pnorm(size_t p) const
+    {
+        double sum = 0.;
+        for (size_t i = 0; i < size; i++)
+            sum += pow(std::abs(m[i]), p);
+        return pow(sum, 1./p);
     }
 
     double Matrix::normSquare() const
